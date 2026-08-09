@@ -11,12 +11,18 @@ var browseCmd = &cobra.Command{
 	Short: "Browse popular movies and TV shows",
 }
 
+var browseMoviesPage int
+
 var browseMoviesCmd = &cobra.Command{
 	Use:   "movies",
 	Short: "Browse popular movies",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		results, err := client.DiscoverMovies(cmd.Context(), 1)
+		if browseMoviesPage < 1 {
+			return fmt.Errorf("--page must be >= 1")
+		}
+
+		results, err := client.DiscoverMovies(cmd.Context(), browseMoviesPage)
 		if err != nil {
 			return err
 		}
@@ -28,16 +34,23 @@ var browseMoviesCmd = &cobra.Command{
 		}
 
 		printPickables(cmd.OutOrStdout(), items)
+		fmt.Fprintf(cmd.OutOrStdout(), "Page %d of %d\n", results.Page, results.TotalPages)
 		return nil
 	},
 }
+
+var browseTVPage int
 
 var browseTVCmd = &cobra.Command{
 	Use:   "tv",
 	Short: "Browse popular TV shows",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		results, err := client.DiscoverTV(cmd.Context(), 1)
+		if browseTVPage < 1 {
+			return fmt.Errorf("--page must be >= 1")
+		}
+
+		results, err := client.DiscoverTV(cmd.Context(), browseTVPage)
 		if err != nil {
 			return err
 		}
@@ -49,10 +62,13 @@ var browseTVCmd = &cobra.Command{
 		}
 
 		printPickables(cmd.OutOrStdout(), items)
+		fmt.Fprintf(cmd.OutOrStdout(), "Page %d of %d\n", results.Page, results.TotalPages)
 		return nil
 	},
 }
 
 func init() {
+	browseMoviesCmd.Flags().IntVar(&browseMoviesPage, "page", 1, "page number (1-based)")
+	browseTVCmd.Flags().IntVar(&browseTVPage, "page", 1, "page number (1-based)")
 	browseCmd.AddCommand(browseMoviesCmd, browseTVCmd)
 }

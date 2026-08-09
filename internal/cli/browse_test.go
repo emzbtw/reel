@@ -27,10 +27,44 @@ func TestBrowseMoviesCmd_PrintsTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute() returned error: %v", err)
 	}
-	for _, want := range []string{"Dune", "Dune: Part Two", "Movie"} {
+	for _, want := range []string{"Dune", "Dune: Part Two", "Movie", "Page 1 of 100"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q: %s", want, out)
 		}
+	}
+}
+
+func TestBrowseMoviesCmd_PageFlag(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("page"); got != "3" {
+			t.Errorf("page param = %q, want %q", got, "3")
+		}
+		w.Write([]byte(`{
+			"page": 3, "totalPages": 100, "totalResults": 2000,
+			"results": [{"id": 1, "mediaType": "movie", "title": "Dune", "releaseDate": "2021-10-22"}]
+		}`))
+	})
+
+	out, err := execute(t, "", "browse", "movies", "--page", "3")
+	if err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+	if !strings.Contains(out, "Page 3 of 100") {
+		t.Errorf("output = %q, want it to mention Page 3 of 100", out)
+	}
+}
+
+func TestBrowseMoviesCmd_InvalidPage(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no request should have been made for an invalid --page")
+	})
+
+	_, err := execute(t, "", "browse", "movies", "--page", "0")
+	if err == nil {
+		t.Fatal("execute() returned nil error, want an error for --page 0")
+	}
+	if !strings.Contains(err.Error(), "--page") {
+		t.Errorf("err = %q, want it to mention --page", err)
 	}
 }
 
@@ -65,10 +99,44 @@ func TestBrowseTVCmd_PrintsTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute() returned error: %v", err)
 	}
-	for _, want := range []string{"Dune: Prophecy", "TV"} {
+	for _, want := range []string{"Dune: Prophecy", "TV", "Page 1 of 100"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q: %s", want, out)
 		}
+	}
+}
+
+func TestBrowseTVCmd_PageFlag(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("page"); got != "3" {
+			t.Errorf("page param = %q, want %q", got, "3")
+		}
+		w.Write([]byte(`{
+			"page": 3, "totalPages": 100, "totalResults": 2000,
+			"results": [{"id": 1, "mediaType": "tv", "name": "Dune: Prophecy", "firstAirDate": "2024-11-17"}]
+		}`))
+	})
+
+	out, err := execute(t, "", "browse", "tv", "--page", "3")
+	if err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+	if !strings.Contains(out, "Page 3 of 100") {
+		t.Errorf("output = %q, want it to mention Page 3 of 100", out)
+	}
+}
+
+func TestBrowseTVCmd_InvalidPage(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no request should have been made for an invalid --page")
+	})
+
+	_, err := execute(t, "", "browse", "tv", "--page", "-1")
+	if err == nil {
+		t.Fatal("execute() returned nil error, want an error for --page -1")
+	}
+	if !strings.Contains(err.Error(), "--page") {
+		t.Errorf("err = %q, want it to mention --page", err)
 	}
 }
 
