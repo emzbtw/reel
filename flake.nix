@@ -29,5 +29,9 @@
         mainProgram = "reel";
       };
     };
+
+    devShells.${system}.default = pkgs.mkShell {
+      packages = [pkgs.go pkgs.gopls pkgs.gofumpt];
+    };
   };
 }
