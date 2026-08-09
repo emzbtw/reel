@@ -31,6 +31,11 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(searchCmd, requestCmd, statusCmd, trendingCmd, browseCmd)
+
+	// --json is shared across the read-only, result-listing commands only.
+	for _, cmd := range []*cobra.Command{searchCmd, trendingCmd, browseMoviesCmd, browseTVCmd} {
+		addJSONFlag(cmd)
+	}
 }
 
 // Execute runs the root command. Any returned error should be formatted

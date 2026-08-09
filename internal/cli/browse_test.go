@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/emzbtw/reel/internal/models"
 )
 
 func TestBrowseMoviesCmd_PrintsTable(t *testing.T) {
@@ -65,6 +68,33 @@ func TestBrowseMoviesCmd_InvalidPage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--page") {
 		t.Errorf("err = %q, want it to mention --page", err)
+	}
+}
+
+func TestBrowseMoviesCmd_JSON(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{
+			"page": 1, "totalPages": 100, "totalResults": 2000,
+			"results": [
+				{"id": 1, "mediaType": "movie", "title": "Dune", "releaseDate": "2021-10-22"}
+			]
+		}`))
+	})
+
+	out, err := execute(t, "", "browse", "movies", "--json")
+	if err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+
+	var results []models.MovieResult
+	if unmarshalErr := json.Unmarshal([]byte(out), &results); unmarshalErr != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", unmarshalErr, out)
+	}
+	if len(results) != 1 || results[0].Title != "Dune" {
+		t.Errorf("results = %+v, want a single Dune result", results)
+	}
+	if strings.Contains(out, "Page") {
+		t.Errorf("output = %q, should not include the Page X of Y line in JSON mode", out)
 	}
 }
 
@@ -137,6 +167,33 @@ func TestBrowseTVCmd_InvalidPage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--page") {
 		t.Errorf("err = %q, want it to mention --page", err)
+	}
+}
+
+func TestBrowseTVCmd_JSON(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{
+			"page": 1, "totalPages": 100, "totalResults": 2000,
+			"results": [
+				{"id": 1, "mediaType": "tv", "name": "Dune: Prophecy", "firstAirDate": "2024-11-17"}
+			]
+		}`))
+	})
+
+	out, err := execute(t, "", "browse", "tv", "--json")
+	if err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+
+	var results []models.TvResult
+	if unmarshalErr := json.Unmarshal([]byte(out), &results); unmarshalErr != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", unmarshalErr, out)
+	}
+	if len(results) != 1 || results[0].Name != "Dune: Prophecy" {
+		t.Errorf("results = %+v, want a single Dune: Prophecy result", results)
+	}
+	if strings.Contains(out, "Page") {
+		t.Errorf("output = %q, should not include the Page X of Y line in JSON mode", out)
 	}
 }
 

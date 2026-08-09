@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 )
 
@@ -17,12 +15,6 @@ var trendingCmd = &cobra.Command{
 		}
 
 		items := mediaOnly(results.Results)
-		if len(items) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No trending results.")
-			return nil
-		}
-
-		printPickables(cmd.OutOrStdout(), items)
-		return nil
+		return renderResults(cmd, results.Results, items, "No trending results.")
 	},
 }

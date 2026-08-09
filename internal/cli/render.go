@@ -1,12 +1,45 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"text/tabwriter"
 
+	"github.com/spf13/cobra"
+
 	"github.com/emzbtw/reel/internal/models"
 )
+
+// jsonOutput backs every command's --json flag (registered via
+// addJSONFlag). Only one command runs per process, so a single shared
+// variable is enough.
+var jsonOutput bool
+
+// addJSONFlag registers the shared --json flag on cmd.
+func addJSONFlag(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output results as JSON instead of a table")
+}
+
+// renderResults prints results as-is (no separate JSON schema) when --json
+// is set, or falls back to the numbered table over the already-flattened
+// items. emptyMsg is only shown in table mode; JSON mode always emits a
+// valid (possibly empty) JSON array.
+func renderResults[T any](cmd *cobra.Command, results []T, items []pickable, emptyMsg string) error {
+	if jsonOutput {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(results)
+	}
+
+	if len(items) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), emptyMsg)
+		return nil
+	}
+
+	printPickables(cmd.OutOrStdout(), items)
+	return nil
+}
 
 // pickable is a movie or TV search/discover result, flattened to what a
 // numbered picker needs to disambiguate rows.

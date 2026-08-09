@@ -19,12 +19,6 @@ var searchCmd = &cobra.Command{
 		}
 
 		items := mediaOnly(results.Results)
-		if len(items) == 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "No movies or TV shows found for %q.\n", query)
-			return nil
-		}
-
-		printPickables(cmd.OutOrStdout(), items)
-		return nil
+		return renderResults(cmd, results.Results, items, fmt.Sprintf("No movies or TV shows found for %q.", query))
 	},
 }

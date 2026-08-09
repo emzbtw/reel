@@ -28,13 +28,12 @@ var browseMoviesCmd = &cobra.Command{
 		}
 
 		items := moviePickables(results.Results)
-		if len(items) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No movies found.")
-			return nil
+		if err := renderResults(cmd, results.Results, items, "No movies found."); err != nil {
+			return err
 		}
-
-		printPickables(cmd.OutOrStdout(), items)
-		fmt.Fprintf(cmd.OutOrStdout(), "Page %d of %d\n", results.Page, results.TotalPages)
+		if !jsonOutput && len(items) > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "Page %d of %d\n", results.Page, results.TotalPages)
+		}
 		return nil
 	},
 }
@@ -56,13 +55,12 @@ var browseTVCmd = &cobra.Command{
 		}
 
 		items := tvPickables(results.Results)
-		if len(items) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No TV shows found.")
-			return nil
+		if err := renderResults(cmd, results.Results, items, "No TV shows found."); err != nil {
+			return err
 		}
-
-		printPickables(cmd.OutOrStdout(), items)
-		fmt.Fprintf(cmd.OutOrStdout(), "Page %d of %d\n", results.Page, results.TotalPages)
+		if !jsonOutput && len(items) > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "Page %d of %d\n", results.Page, results.TotalPages)
+		}
 		return nil
 	},
 }
