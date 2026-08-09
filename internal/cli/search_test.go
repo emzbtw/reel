@@ -64,19 +64,13 @@ func TestSearchCmd_JSON(t *testing.T) {
 		t.Fatalf("execute() returned error: %v", err)
 	}
 
-	// models.SearchResult has a custom UnmarshalJSON expecting the API's
-	// flat shape, but no MarshalJSON, so json.Marshal instead emits its Go
-	// field names (MediaType/Movie/TV/Person) nesting the sub-results.
-	// Decode with a plain mirror struct rather than models.SearchResult
-	// itself to check what actually comes out on the wire.
-	type rawSearchResult struct {
-		MediaType models.MediaType
-		Movie     *models.MovieResult
-		TV        *models.TvResult
-		Person    *models.PersonResult
+	// Output must be flat, matching the API's own shape (and browse's),
+	// not nested under SearchResult's Go field names.
+	if strings.Contains(out, `"MediaType"`) || strings.Contains(out, `"Movie":`) {
+		t.Errorf("output is nested under Go field names, want the flat API shape: %s", out)
 	}
 
-	var results []rawSearchResult
+	var results []models.SearchResult
 	if unmarshalErr := json.Unmarshal([]byte(out), &results); unmarshalErr != nil {
 		t.Fatalf("output is not valid JSON: %v\noutput: %s", unmarshalErr, out)
 	}

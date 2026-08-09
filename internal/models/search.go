@@ -48,6 +48,23 @@ type SearchResult struct {
 	Person    *PersonResult
 }
 
+// MarshalJSON mirrors UnmarshalJSON: it re-emits whichever of Movie, TV, or
+// Person is set, flat and using that type's own tags, so encoding a
+// SearchResult reproduces the same shape it was decoded from rather than
+// nesting it under Go field names.
+func (r SearchResult) MarshalJSON() ([]byte, error) {
+	switch r.MediaType {
+	case MediaMovie:
+		return json.Marshal(r.Movie)
+	case MediaTV:
+		return json.Marshal(r.TV)
+	case MediaPerson:
+		return json.Marshal(r.Person)
+	default:
+		return []byte("null"), nil
+	}
+}
+
 func (r *SearchResult) UnmarshalJSON(data []byte) error {
 	var probe struct {
 		MediaType MediaType `json:"mediaType"`

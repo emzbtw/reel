@@ -48,15 +48,11 @@ func TestTrendingCmd_JSON(t *testing.T) {
 		t.Fatalf("execute() returned error: %v", err)
 	}
 
-	// See TestSearchCmd_JSON for why this mirror struct exists rather than
-	// decoding into models.SearchResult directly.
-	type rawSearchResult struct {
-		MediaType models.MediaType
-		Movie     *models.MovieResult
-		TV        *models.TvResult
+	if strings.Contains(out, `"MediaType"`) || strings.Contains(out, `"Movie":`) {
+		t.Errorf("output is nested under Go field names, want the flat API shape: %s", out)
 	}
 
-	var results []rawSearchResult
+	var results []models.SearchResult
 	if unmarshalErr := json.Unmarshal([]byte(out), &results); unmarshalErr != nil {
 		t.Fatalf("output is not valid JSON: %v\noutput: %s", unmarshalErr, out)
 	}
