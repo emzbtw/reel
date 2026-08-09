@@ -30,7 +30,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(searchCmd, requestCmd, statusCmd, trendingCmd)
+	rootCmd.AddCommand(searchCmd, requestCmd, statusCmd, trendingCmd, browseCmd)
 }
 
 // Execute runs the root command. Any returned error should be formatted

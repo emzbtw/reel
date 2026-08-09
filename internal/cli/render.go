@@ -49,6 +49,26 @@ func mediaOnly(results []models.SearchResult) []pickable {
 	return out
 }
 
+// moviePickables converts a homogeneous movie list (e.g. from
+// DiscoverMovies) into the same row shape mediaOnly produces.
+func moviePickables(results []models.MovieResult) []pickable {
+	out := make([]pickable, len(results))
+	for i, m := range results {
+		out[i] = pickable{ID: m.ID, Title: m.Title, Year: year(m.ReleaseDate), Type: models.MediaMovie}
+	}
+	return out
+}
+
+// tvPickables converts a homogeneous TV list (e.g. from DiscoverTV) into
+// the same row shape mediaOnly produces.
+func tvPickables(results []models.TvResult) []pickable {
+	out := make([]pickable, len(results))
+	for i, t := range results {
+		out[i] = pickable{ID: t.ID, Title: t.Name, Year: year(t.FirstAirDate), Type: models.MediaTV}
+	}
+	return out
+}
+
 func year(date string) string {
 	if len(date) < 4 {
 		return "—"
