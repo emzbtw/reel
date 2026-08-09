@@ -33,7 +33,7 @@ func init() {
 	rootCmd.AddCommand(searchCmd, requestCmd, statusCmd, trendingCmd, browseCmd)
 
 	// --json is shared across the read-only, result-listing commands only.
-	for _, cmd := range []*cobra.Command{searchCmd, trendingCmd, browseMoviesCmd, browseTVCmd} {
+	for _, cmd := range []*cobra.Command{searchCmd, trendingCmd, browseMoviesCmd, browseTVCmd, statusCmd} {
 		addJSONFlag(cmd)
 	}
 }

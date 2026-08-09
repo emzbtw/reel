@@ -21,15 +21,21 @@ func addJSONFlag(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output results as JSON instead of a table")
 }
 
-// renderResults prints results as-is (no separate JSON schema) when --json
-// is set, or falls back to the numbered table over the already-flattened
-// items. emptyMsg is only shown in table mode; JSON mode always emits a
-// valid (possibly empty) JSON array.
+// writeJSON marshals v as-is (no separate JSON schema) to w, e.g. a raw
+// results slice straight from the API models.
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
+// renderResults writes results via writeJSON when --json is set, or falls
+// back to the numbered table over the already-flattened items. emptyMsg is
+// only shown in table mode; JSON mode always emits a valid (possibly empty)
+// JSON array.
 func renderResults[T any](cmd *cobra.Command, results []T, items []pickable, emptyMsg string) error {
 	if jsonOutput {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(results)
+		return writeJSON(cmd.OutOrStdout(), results)
 	}
 
 	if len(items) == 0 {

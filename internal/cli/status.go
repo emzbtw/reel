@@ -20,6 +20,10 @@ var statusCmd = &cobra.Command{
 			return err
 		}
 
+		if jsonOutput {
+			return writeJSON(cmd.OutOrStdout(), list.Results)
+		}
+
 		if len(list.Results) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No requests found.")
 			return nil
