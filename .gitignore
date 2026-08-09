@@ -1,4 +1,5 @@
 /reel
+/cmd/reel/main
 *.test
 *.out
 go.work
