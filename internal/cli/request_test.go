@@ -166,3 +166,114 @@ func TestRequestCmd_NoResults(t *testing.T) {
 		t.Errorf("output = %q, want no-results message", out)
 	}
 }
+
+func TestRequestCmd_SelectMovie(t *testing.T) {
+	var searched, posted bool
+	var gotBody map[string]any
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/search":
+			searched = true
+		case r.URL.Path == "/api/v1/request" && r.Method == http.MethodPost:
+			posted = true
+			b, _ := io.ReadAll(r.Body)
+			json.Unmarshal(b, &gotBody)
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id": 99, "status": 1}`))
+		}
+	})
+
+	out, err := execute(t, "", "request", "--select", "438631", "--type", "movie")
+	if err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+	if searched {
+		t.Error("--select should skip search entirely")
+	}
+	if !posted {
+		t.Fatal("expected a POST /request, got none")
+	}
+	if gotBody["mediaType"] != "movie" || gotBody["mediaId"] != float64(438631) {
+		t.Errorf("request body = %+v", gotBody)
+	}
+	if !strings.Contains(out, "Requested tmdbId 438631 (request #99)") {
+		t.Errorf("output = %q, want a tmdbId-based confirmation", out)
+	}
+}
+
+func TestRequestCmd_SelectTVSendsAllSeasons(t *testing.T) {
+	var gotBody map[string]any
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/request" && r.Method == http.MethodPost {
+			b, _ := io.ReadAll(r.Body)
+			json.Unmarshal(b, &gotBody)
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id": 100, "status": 1}`))
+		}
+	})
+
+	// --type is accepted case-insensitively.
+	if _, err := execute(t, "", "request", "--select", "1", "--type", "TV"); err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+	if gotBody["mediaType"] != "tv" || gotBody["seasons"] != "all" {
+		t.Errorf("request body = %+v, want mediaType=tv seasons=all", gotBody)
+	}
+}
+
+func TestRequestCmd_SelectJSON(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id": 99, "status": 1, "media": {"id": 1, "tmdbId": 438631, "status": 2}}`))
+	})
+
+	out, err := execute(t, "", "request", "--select", "438631", "--type", "movie", "--json")
+	if err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+
+	// Fully non-interactive: no table, no prompt, just the JSON object.
+	if strings.Contains(out, "Pick a result") || strings.Contains(out, "#") {
+		t.Errorf("output = %q, want no picker output at all", out)
+	}
+
+	var req models.MediaRequest
+	if unmarshalErr := json.Unmarshal([]byte(out), &req); unmarshalErr != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", unmarshalErr, out)
+	}
+	if req.ID != 99 || req.Media.TmdbID != 438631 {
+		t.Errorf("req = %+v, want id=99 tmdbId=438631", req)
+	}
+}
+
+func TestRequestCmd_SelectValidation(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no request should have been made for invalid --select/--type usage")
+	})
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"missing --type", []string{"request", "--select", "1"}, "--type is required"},
+		{"missing --select (only --type given)", []string{"request", "--type", "movie"}, "--select must be a positive TMDB ID"},
+		{"no query and no flags", []string{"request"}, "request requires a <query> argument"},
+		{"invalid --type", []string{"request", "--select", "1", "--type", "album"}, "--type must be movie or tv"},
+		{"select explicitly zero", []string{"request", "--select", "0", "--type", "movie"}, "--select must be a positive TMDB ID"},
+		{"negative --select", []string{"request", "--select", "-1", "--type", "movie"}, "--select must be a positive TMDB ID"},
+		{"query combined with --select", []string{"request", "dune", "--select", "1", "--type", "movie"}, "cannot be combined with --select"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := execute(t, "", tt.args...)
+			if err == nil {
+				t.Fatalf("execute(%v) returned nil error, want an error containing %q", tt.args, tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("execute(%v) err = %q, want it to contain %q", tt.args, err, tt.want)
+			}
+		})
+	}
+}
