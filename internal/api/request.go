@@ -9,18 +9,22 @@ import (
 	"github.com/emzbtw/reel/internal/models"
 )
 
-// CreateRequestInput is the body of POST /request. Seasons is TV-only and
-// ignored for movie requests.
+// CreateRequestInput is the body of POST /request. Seasons/AllSeasons are
+// TV-only and ignored for movie requests. AllSeasons takes precedence over
+// Seasons when both are set.
 type CreateRequestInput struct {
-	MediaType models.MediaType
-	MediaID   int
-	Seasons   []int
+	MediaType  models.MediaType
+	MediaID    int
+	AllSeasons bool
+	Seasons    []int
 }
 
 type createRequestBody struct {
 	MediaType string `json:"mediaType"`
 	MediaID   int    `json:"mediaId"`
-	Seasons   []int  `json:"seasons,omitempty"`
+	// Seasons is either "all" or a []int, matching the spec's
+	// oneOf(number[], "all").
+	Seasons any `json:"seasons,omitempty"`
 }
 
 // CreateRequest submits a new media request.
@@ -28,7 +32,12 @@ func (c *Client) CreateRequest(ctx context.Context, in CreateRequestInput) (*mod
 	body := createRequestBody{
 		MediaType: string(in.MediaType),
 		MediaID:   in.MediaID,
-		Seasons:   in.Seasons,
+	}
+	switch {
+	case in.AllSeasons:
+		body.Seasons = "all"
+	case len(in.Seasons) > 0:
+		body.Seasons = in.Seasons
 	}
 
 	var out models.MediaRequest

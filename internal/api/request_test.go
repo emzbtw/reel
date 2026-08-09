@@ -64,6 +64,28 @@ func TestCreateRequest_TVWithSeasons(t *testing.T) {
 	}
 }
 
+func TestCreateRequest_TVAllSeasons(t *testing.T) {
+	var gotBody map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id": 8, "status": 1}`))
+	})
+
+	_, err := c.CreateRequest(context.Background(), CreateRequestInput{
+		MediaType:  models.MediaTV,
+		MediaID:    456,
+		AllSeasons: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest() returned error: %v", err)
+	}
+	if gotBody["seasons"] != "all" {
+		t.Errorf("request body seasons = %+v, want %q", gotBody["seasons"], "all")
+	}
+}
+
 func TestListRequests(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("filter"); got != "pending" {
