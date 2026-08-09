@@ -40,7 +40,12 @@ func NewClient(cfg *config.Config) *Client {
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	u := c.baseURL + "/api/v1" + path
 	if len(query) > 0 {
-		u += "?" + query.Encode()
+		// url.Values.Encode() escapes spaces as "+" (the
+		// application/x-www-form-urlencoded convention), but Seerr's query
+		// validator rejects "+" and requires "%20". Encode() already
+		// percent-encodes any literal "+" in a value as "%2B", so every "+"
+		// left in its output represents a space and this swap is safe.
+		u += "?" + strings.ReplaceAll(query.Encode(), "+", "%20")
 	}
 
 	var bodyReader io.Reader

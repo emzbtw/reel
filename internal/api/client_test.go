@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/emzbtw/reel/internal/config"
@@ -29,6 +30,27 @@ func TestDo_SendsAPIKeyHeader(t *testing.T) {
 	}
 	if gotKey != "test-key" {
 		t.Errorf("X-Api-Key header = %q, want %q", gotKey, "test-key")
+	}
+}
+
+func TestDo_EncodesSpacesAsPercent20(t *testing.T) {
+	var gotRawQuery string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotRawQuery = r.URL.RawQuery
+		w.Write([]byte(`{"results":[]}`))
+	})
+
+	// Seerr's own query validator rejects "+" for spaces and requires
+	// "%20" (confirmed against a live instance); Go's default
+	// url.Values.Encode() uses "+", so this must not leak through.
+	if _, err := c.Search(context.Background(), "devil in dune", 0); err != nil {
+		t.Fatalf("Search() returned error: %v", err)
+	}
+	if strings.Contains(gotRawQuery, "+") {
+		t.Errorf("raw query = %q, should not contain a literal +", gotRawQuery)
+	}
+	if !strings.Contains(gotRawQuery, "devil%20in%20dune") {
+		t.Errorf("raw query = %q, want it to contain %q", gotRawQuery, "devil%20in%20dune")
 	}
 }
 
