@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -79,4 +80,20 @@ func (c *Client) ListRequests(ctx context.Context, opts ListRequestsOptions) (*R
 		return nil, err
 	}
 	return &out, nil
+}
+
+// GetRequest returns a single request by its local request ID (not TMDB ID).
+func (c *Client) GetRequest(ctx context.Context, id int) (*models.MediaRequest, error) {
+	var out models.MediaRequest
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/request/%d", id), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteRequest removes a request by its local request ID. Per the spec,
+// removing anything other than a pending request requires the
+// MANAGE_REQUESTS permission; without it, Seerr returns 403.
+func (c *Client) DeleteRequest(ctx context.Context, id int) error {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/request/%d", id), nil, nil, nil)
 }

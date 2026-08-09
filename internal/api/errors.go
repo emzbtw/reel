@@ -10,6 +10,7 @@ import (
 // underlying *APIError.
 var (
 	ErrUnauthorized = errors.New("seerr: unauthorized (check API key)")
+	ErrForbidden    = errors.New("seerr: forbidden")
 	ErrNotFound     = errors.New("seerr: not found")
 	ErrRateLimited  = errors.New("seerr: rate limited")
 )
@@ -28,6 +29,8 @@ func newAPIError(statusCode int, status string, body []byte) *APIError {
 	switch statusCode {
 	case http.StatusUnauthorized:
 		e.sentinel = ErrUnauthorized
+	case http.StatusForbidden:
+		e.sentinel = ErrForbidden
 	case http.StatusNotFound:
 		e.sentinel = ErrNotFound
 	case http.StatusTooManyRequests:

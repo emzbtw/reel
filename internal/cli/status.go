@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -29,17 +30,24 @@ var statusCmd = &cobra.Command{
 			return nil
 		}
 
-		// Seerr's GET /request doesn't join in a title (MediaInfo only
-		// carries tmdbId/tvdbId), so rows are identified by TMDB ID until
-		// title enrichment is added.
-		tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tTMDB ID\tRequest Status\tAvailability\tRequested")
-		for _, r := range list.Results {
-			fmt.Fprintf(tw, "%d\t%d\t%s\t%s\t%s\n",
-				r.ID, r.Media.TmdbID, requestStatusLabel(r.Status), mediaStatusLabel(r.Media.Status), r.CreatedAt)
-		}
-		return tw.Flush()
+		printRequestsTable(cmd.OutOrStdout(), list.Results)
+		return nil
 	},
+}
+
+// printRequestsTable renders requests using the same columns wherever a
+// request needs to be shown (status's listing, delete's confirmation
+// prompt). Seerr's GET /request doesn't join in a title (MediaInfo only
+// carries tmdbId/tvdbId), so rows are identified by TMDB ID until title
+// enrichment is added.
+func printRequestsTable(w io.Writer, requests []models.MediaRequest) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tTMDB ID\tRequest Status\tAvailability\tRequested")
+	for _, r := range requests {
+		fmt.Fprintf(tw, "%d\t%d\t%s\t%s\t%s\n",
+			r.ID, r.Media.TmdbID, requestStatusLabel(r.Status), mediaStatusLabel(r.Media.Status), r.CreatedAt)
+	}
+	tw.Flush()
 }
 
 func requestStatusLabel(status int) string {

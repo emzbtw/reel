@@ -30,7 +30,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(searchCmd, requestCmd, statusCmd, trendingCmd, browseCmd)
+	rootCmd.AddCommand(searchCmd, requestCmd, statusCmd, trendingCmd, browseCmd, deleteCmd)
 
 	// --json is shared across the read-only, result-listing commands, plus
 	// request (which only applies it to the final created-request output;

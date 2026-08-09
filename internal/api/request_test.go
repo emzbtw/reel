@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -103,5 +104,61 @@ func TestListRequests(t *testing.T) {
 	}
 	if len(got.Results) != 1 || got.Results[0].ID != 1 {
 		t.Errorf("Results = %+v", got.Results)
+	}
+}
+
+func TestGetRequest(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/request/5" {
+			t.Errorf("method/path = %s %s, want GET /api/v1/request/5", r.Method, r.URL.Path)
+		}
+		w.Write([]byte(`{"id": 5, "status": 2, "media": {"id": 10, "tmdbId": 1234, "status": 4}}`))
+	})
+
+	got, err := c.GetRequest(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("GetRequest() returned error: %v", err)
+	}
+	if got.ID != 5 || got.Media.TmdbID != 1234 {
+		t.Errorf("got = %+v, want id=5 tmdbId=1234", got)
+	}
+}
+
+func TestGetRequest_NotFound(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"not found"}`))
+	})
+
+	_, err := c.GetRequest(context.Background(), 999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteRequest(t *testing.T) {
+	var gotMethod, gotPath string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := c.DeleteRequest(context.Background(), 5); err != nil {
+		t.Fatalf("DeleteRequest() returned error: %v", err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/api/v1/request/5" {
+		t.Errorf("method/path = %s %s, want DELETE /api/v1/request/5", gotMethod, gotPath)
+	}
+}
+
+func TestDeleteRequest_Forbidden(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message":"forbidden"}`))
+	})
+
+	err := c.DeleteRequest(context.Background(), 5)
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("err = %v, want ErrForbidden", err)
 	}
 }

@@ -12,6 +12,8 @@ func FormatError(err error) string {
 	switch {
 	case errors.Is(err, api.ErrUnauthorized):
 		return "Seerr rejected the API key (401 Unauthorized). Check REEL_SEERR_API_KEY or seerr_api_key in your config file."
+	case errors.Is(err, api.ErrForbidden):
+		return "Seerr denied this action (403 Forbidden). You may only be able to act on your own pending requests unless you have the MANAGE_REQUESTS permission."
 	case errors.Is(err, api.ErrNotFound):
 		return "Seerr returned 404 Not Found. Check the Seerr URL in your config."
 	case errors.Is(err, api.ErrRateLimited):

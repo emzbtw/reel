@@ -60,6 +60,7 @@ func TestDo_ErrorMapping(t *testing.T) {
 		wantErr error
 	}{
 		{http.StatusUnauthorized, ErrUnauthorized},
+		{http.StatusForbidden, ErrForbidden},
 		{http.StatusNotFound, ErrNotFound},
 		{http.StatusTooManyRequests, ErrRateLimited},
 	}
