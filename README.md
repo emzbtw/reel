@@ -203,6 +203,12 @@ reel/
 
 ---
 
+# Development
+
+Rebuild the `./reel` binary after pulling changes (`make build`) — a stale binary silently no-ops instead of reflecting new code.
+
+---
+
 # Milestones
 
 ## v0.1
