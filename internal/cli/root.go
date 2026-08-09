@@ -32,8 +32,10 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(searchCmd, requestCmd, statusCmd, trendingCmd, browseCmd)
 
-	// --json is shared across the read-only, result-listing commands only.
-	for _, cmd := range []*cobra.Command{searchCmd, trendingCmd, browseMoviesCmd, browseTVCmd, statusCmd} {
+	// --json is shared across the read-only, result-listing commands, plus
+	// request (which only applies it to the final created-request output;
+	// the picker itself always stays interactive text).
+	for _, cmd := range []*cobra.Command{searchCmd, trendingCmd, browseMoviesCmd, browseTVCmd, statusCmd, requestCmd} {
 		addJSONFlag(cmd)
 	}
 }

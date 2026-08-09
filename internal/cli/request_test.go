@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/emzbtw/reel/internal/models"
 )
 
 const requestSearchResults = `{
@@ -49,6 +51,45 @@ func TestRequestCmd_PickMovie(t *testing.T) {
 	}
 	if !strings.Contains(out, `Requested "Dune" (request #99)`) {
 		t.Errorf("output = %q, want confirmation message", out)
+	}
+}
+
+func TestRequestCmd_PickMovieJSON(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/search":
+			w.Write([]byte(requestSearchResults))
+		case r.URL.Path == "/api/v1/request" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id": 99, "status": 1, "media": {"id": 1, "tmdbId": 1234, "status": 2}}`))
+		}
+	})
+
+	out, err := execute(t, "1\n", "request", "dune", "--json")
+	if err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+
+	// The picker table and prompt still print as plain text even with
+	// --json; only the final created-request output changes shape.
+	if !strings.Contains(out, "Dune") || !strings.Contains(out, "Pick a result to request") {
+		t.Errorf("output = %q, want the picker table and prompt to still print", out)
+	}
+	if strings.Contains(out, `Requested "Dune"`) {
+		t.Errorf("output = %q, should not print the plain-text confirmation under --json", out)
+	}
+
+	jsonStart := strings.Index(out, "{")
+	if jsonStart == -1 {
+		t.Fatalf("output has no JSON object: %s", out)
+	}
+
+	var req models.MediaRequest
+	if unmarshalErr := json.Unmarshal([]byte(out[jsonStart:]), &req); unmarshalErr != nil {
+		t.Fatalf("final output is not valid JSON: %v\noutput: %s", unmarshalErr, out)
+	}
+	if req.ID != 99 || req.Media.TmdbID != 1234 {
+		t.Errorf("req = %+v, want id=99 tmdbId=1234", req)
 	}
 }
 

@@ -59,6 +59,10 @@ var requestCmd = &cobra.Command{
 			return err
 		}
 
+		if jsonOutput {
+			return writeJSON(cmd.OutOrStdout(), req)
+		}
+
 		fmt.Fprintf(cmd.OutOrStdout(), "Requested %q (request #%d).\n", picked.Title, req.ID)
 		return nil
 	},
