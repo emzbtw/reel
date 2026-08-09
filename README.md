@@ -188,17 +188,16 @@ reel/
 ├── internal/
 │   ├── api/
 │   ├── cli/
-│   ├── commands/
 │   ├── config/
-│   ├── models/
-│   ├── obsidian/
-│   └── tui/
-├── docs/
+│   └── models/
+├── flake.lock
+├── flake.nix
 ├── go.mod
 ├── go.sum
+├── LICENSE
+├── Makefile
 ├── README.md
-├── ROADMAP.md
-└── flake.nix
+└── ROADMAP.md
 ```
 
 ---
