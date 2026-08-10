@@ -15,6 +15,8 @@ type MovieResult struct {
 	PosterPath    string     `json:"posterPath"`
 	ReleaseDate   string     `json:"releaseDate"`
 	VoteAverage   float64    `json:"voteAverage"`
+	VoteCount     int        `json:"voteCount"`
+	Popularity    float64    `json:"popularity"`
 	MediaInfo     *MediaInfo `json:"mediaInfo"`
 }
 
@@ -28,6 +30,8 @@ type TvResult struct {
 	PosterPath   string     `json:"posterPath"`
 	FirstAirDate string     `json:"firstAirDate"`
 	VoteAverage  float64    `json:"voteAverage"`
+	VoteCount    int        `json:"voteCount"`
+	Popularity   float64    `json:"popularity"`
 	MediaInfo    *MediaInfo `json:"mediaInfo"`
 }
 
