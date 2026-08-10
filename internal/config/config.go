@@ -15,6 +15,12 @@ import (
 type Config struct {
 	SeerrURL    string `toml:"seerr_url"`
 	SeerrAPIKey string `toml:"seerr_api_key"`
+
+	// ObsidianNotes are the notes "reel sync" operates on when invoked
+	// without a path argument. Unlike the Seerr settings it is optional:
+	// only "reel sync" reads it, so leaving it unset must not break every
+	// other command.
+	ObsidianNotes []string `toml:"obsidian_notes"`
 }
 
 // Load reads configuration from the config file, then applies environment
@@ -41,6 +47,10 @@ func Load() (*Config, error) {
 		cfg.SeerrAPIKey = v
 	}
 
+	for i, p := range cfg.ObsidianNotes {
+		cfg.ObsidianNotes[i] = expandHome(p)
+	}
+
 	var missing []string
 	if cfg.SeerrURL == "" {
 		missing = append(missing, fmt.Sprintf("Seerr URL (set REEL_SEERR_URL or seerr_url in %s)", path))
@@ -53,6 +63,25 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// expandHome resolves a leading "~" against the user's home directory.
+// Note paths are hand-written into the config file, where "~/vault/Movies.md"
+// is the natural way to spell them, but nothing in Go's path handling
+// expands that. A home directory that can't be determined leaves the path
+// untouched, so the failure surfaces later as a plain "no such file".
+func expandHome(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	return filepath.Join(home, path[2:])
 }
 
 // configPath returns the path to reel's config file, honoring

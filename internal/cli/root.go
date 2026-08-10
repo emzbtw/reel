@@ -9,8 +9,12 @@ import (
 )
 
 // client is built once in rootCmd's PersistentPreRunE and used by every
-// subcommand's RunE.
-var client *api.Client
+// subcommand's RunE. cfg is kept alongside it for the settings that aren't
+// only about reaching Seerr, such as the notes "reel sync" defaults to.
+var (
+	client *api.Client
+	cfg    *config.Config
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "reel",
@@ -20,22 +24,23 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
+		loaded, err := config.Load()
 		if err != nil {
 			return err
 		}
+		cfg = loaded
 		client = api.NewClient(cfg)
 		return nil
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(searchCmd, requestCmd, statusCmd, trendingCmd, browseCmd, deleteCmd)
+	rootCmd.AddCommand(searchCmd, requestCmd, statusCmd, trendingCmd, browseCmd, deleteCmd, syncCmd)
 
 	// --json is shared across the read-only, result-listing commands, plus
 	// request (which only applies it to the final created-request output;
 	// the picker itself always stays interactive text).
-	for _, cmd := range []*cobra.Command{searchCmd, trendingCmd, browseMoviesCmd, browseTVCmd, statusCmd, requestCmd} {
+	for _, cmd := range []*cobra.Command{searchCmd, trendingCmd, browseMoviesCmd, browseTVCmd, statusCmd, requestCmd, syncCmd} {
 		addJSONFlag(cmd)
 	}
 }

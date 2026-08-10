@@ -77,6 +77,51 @@ func TestLoad_EnvOnly(t *testing.T) {
 	}
 }
 
+func TestLoad_ObsidianNotes(t *testing.T) {
+	writeConfigFile(t, `
+seerr_url = "https://seerr.example.com"
+seerr_api_key = "file-key"
+obsidian_notes = ["/vault/Movies.md", "~/vault/TV.md"]
+`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if len(cfg.ObsidianNotes) != 2 {
+		t.Fatalf("ObsidianNotes = %v, want 2 entries", cfg.ObsidianNotes)
+	}
+	if cfg.ObsidianNotes[0] != "/vault/Movies.md" {
+		t.Errorf("ObsidianNotes[0] = %q, want it left untouched", cfg.ObsidianNotes[0])
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory available to test ~ expansion")
+	}
+	want := filepath.Join(home, "vault/TV.md")
+	if cfg.ObsidianNotes[1] != want {
+		t.Errorf("ObsidianNotes[1] = %q, want %q", cfg.ObsidianNotes[1], want)
+	}
+}
+
+// Only "reel sync" reads obsidian_notes, so its absence must not turn into a
+// configuration error for every other command.
+func TestLoad_ObsidianNotesOptional(t *testing.T) {
+	writeConfigFile(t, `
+seerr_url = "https://seerr.example.com"
+seerr_api_key = "file-key"
+`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if len(cfg.ObsidianNotes) != 0 {
+		t.Errorf("ObsidianNotes = %v, want empty", cfg.ObsidianNotes)
+	}
+}
+
 func TestLoad_MissingBoth(t *testing.T) {
 	writeConfigFile(t, "")
 
