@@ -10,7 +10,7 @@ Tracks actual progress against the milestones defined in README.md's "Milestones
 * [x] Search
 * [x] Request media
 
-## v0.2
+## v0.2 — Done
 
 Planned (from README):
 
@@ -26,6 +26,7 @@ Landed so far:
 * [x] `reel browse movies` / `reel browse tv`, with `--page` pagination
 * [x] `--json` across the read commands (search, trending, browse movies/tv, status) — better output
 * [x] `reel request --select`/`--type` — fully non-interactive requesting
+* [x] `reel delete` — cancel/remove a request via `DELETE /request/{requestId}`
 
 ## v0.3
 
