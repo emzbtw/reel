@@ -1,0 +1,250 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/emzbtw/reel/internal/models"
+)
+
+var (
+	headerStyle  = lipgloss.NewStyle().Bold(true).Padding(0, 1)
+	searchStyle  = lipgloss.NewStyle().Padding(0, 1) // same left padding as headerStyle, so "Search:" lines up with "reel —"
+	footerStyle  = lipgloss.NewStyle().Faint(true).Padding(0, 1)
+	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(0, 1)
+	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Padding(0, 1)
+	boxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	promptStyle  = lipgloss.NewStyle().Bold(true).Padding(1, 1)
+)
+
+// fallbackWidth/fallbackHeight are used only for the brief window before the
+// first tea.WindowSizeMsg arrives (or in tests that never send one) — real
+// usage always has a window size by the time anything is rendered.
+const fallbackWidth = 80
+const fallbackHeight = 24
+
+// minContentWidth keeps wrapping sane on a genuinely tiny terminal instead
+// of collapsing text to near-zero columns.
+const minContentWidth = 20
+
+// termWidth is the terminal width to render against: m.width once a
+// WindowSizeMsg has arrived, otherwise fallbackWidth.
+func (m model) termWidth() int {
+	if m.width > 0 {
+		return m.width
+	}
+	return fallbackWidth
+}
+
+// termHeight mirrors termWidth for vertical sizing.
+func (m model) termHeight() int {
+	if m.height > 0 {
+		return m.height
+	}
+	return fallbackHeight
+}
+
+// sized returns style with its Width set so it (including its own border,
+// if any) renders no wider than the terminal — the same contract
+// list.SetSize already gives the list in update.go, applied to every other
+// style so no screen bleeds past the actual window size. Content that
+// doesn't fit wraps onto additional lines.
+func (m model) sized(style lipgloss.Style) lipgloss.Style {
+	w := m.termWidth() - style.GetHorizontalBorderSize()
+	if w < minContentWidth {
+		w = minContentWidth
+	}
+	return style.Width(w)
+}
+
+// sizedLine is sized's counterpart for the header and footer: they're
+// single-line status bars, so content that doesn't fit is truncated rather
+// than wrapped onto a second line — View()'s fixed-height layout assumes
+// exactly one row each.
+func (m model) sizedLine(style lipgloss.Style) lipgloss.Style {
+	w := m.termWidth()
+	if w < minContentWidth {
+		w = minContentWidth
+	}
+	return style.MaxWidth(w)
+}
+
+// View renders header, body, and footer stacked to fill exactly
+// termHeight() rows, so the footer stays anchored to the bottom of the
+// screen on every mode instead of trailing directly under whatever the body
+// happens to render (which is as short as one line on e.g. the search or
+// result screens).
+func (m model) View() string {
+	header := m.headerView()
+	footer := m.footerView()
+
+	h := m.termHeight() - chromeLines
+	if h < 1 {
+		h = 1
+	}
+	body := lipgloss.Place(m.termWidth(), h, lipgloss.Left, lipgloss.Top, m.bodyView())
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+func (m model) headerView() string {
+	if m.source == sourceSearch {
+		return m.sizedLine(headerStyle).Render(fmt.Sprintf("reel — Search %q", m.query))
+	}
+
+	mt := "Movies"
+	if m.mediaType == models.MediaTV {
+		mt = "TV"
+	}
+	return m.sizedLine(headerStyle).Render(fmt.Sprintf("reel — Browse %s", mt))
+}
+
+func (m model) bodyView() string {
+	if m.loading {
+		return fmt.Sprintf(" %s Loading…", m.spinner.View())
+	}
+	if m.err != nil && m.mode != modeResult {
+		return m.sized(errorStyle).Render("Error: " + m.err.Error())
+	}
+
+	switch m.mode {
+	case modeSearch:
+		return m.searchView()
+	case modeDetail, modeConfirm:
+		return m.detailView()
+	case modeResult:
+		return m.resultView()
+	default:
+		return m.list.View()
+	}
+}
+
+func (m model) searchView() string {
+	return m.sized(searchStyle).Render("Search: " + m.searchInput.View())
+}
+
+func (m model) detailView() string {
+	it := m.selected
+	var b strings.Builder
+	b.WriteString(it.title)
+	if it.year != "" {
+		fmt.Fprintf(&b, " (%s)", it.year)
+	}
+	b.WriteString("\n")
+	b.WriteString(typeLabel(it.mediaType))
+	if it.voteAverage > 0 {
+		fmt.Fprintf(&b, "  ★ %.1f", it.voteAverage)
+	}
+	if it.status != nil {
+		fmt.Fprintf(&b, "  [%s]", mediaStatusLabel(*it.status))
+	}
+	b.WriteString("\n\n")
+	if it.overview != "" {
+		b.WriteString(it.overview)
+	} else {
+		b.WriteString("No overview available.")
+	}
+
+	box := m.sized(boxStyle).Render(b.String())
+	if m.mode == modeConfirm {
+		prompt := m.sized(promptStyle).Render(fmt.Sprintf("Request %q? [y/N]", it.title))
+		return lipgloss.JoinVertical(lipgloss.Left, box, prompt)
+	}
+	return box
+}
+
+func (m model) resultView() string {
+	if m.err != nil {
+		return m.sized(errorStyle).Render("Request failed: " + m.err.Error())
+	}
+	if m.lastRequest != nil {
+		return m.sized(successStyle).Render(fmt.Sprintf("Requested %q (request #%d).", m.selected.title, m.lastRequest.ID))
+	}
+	return ""
+}
+
+// footerView renders the keybinding hints flush left and, when paging
+// applies, "page X/Y" flush right on the same row — anchored to the bottom
+// of the screen by View(). Hint order is the same across every mode:
+// mode-specific actions first, "q: quit" always last (modeSearch is the one
+// exception, since "q" is a character there rather than the quit key).
+func (m model) footerView() string {
+	hints := m.footerHints()
+
+	inner := m.termWidth() - footerStyle.GetHorizontalFrameSize()
+	if inner < minContentWidth {
+		inner = minContentWidth
+	}
+
+	line := hints
+	if page := m.pageIndicator(); page != "" {
+		gap := inner - lipgloss.Width(hints) - lipgloss.Width(page)
+		if gap < 1 {
+			gap = 1
+		}
+		line = hints + strings.Repeat(" ", gap) + page
+	}
+	return m.sizedLine(footerStyle).Render(line)
+}
+
+// footerHints uses a plain double space between entries rather than a " · "
+// bullet — freeing enough width for "n/p: page" to sit alongside the page
+// badge at a normal 80-column width without truncating.
+func (m model) footerHints() string {
+	switch m.mode {
+	case modeSearch:
+		return "enter: search  esc: cancel"
+	case modeDetail:
+		return "r/enter: request  esc: back  q: quit"
+	case modeConfirm:
+		return "y: confirm  n/esc: cancel  q: quit"
+	case modeResult:
+		return "any key: continue  q: quit"
+	default:
+		hints := "↑/↓: nav  enter: view  n/p: page"
+		if m.source == sourceSearch {
+			hints += "  /: search  esc: clear"
+		} else {
+			hints += "  tab: movie/tv  /: search"
+		}
+		return hints + "  q: quit"
+	}
+}
+
+// pageIndicator is "X/Y" while browsing (Discover or search results) has a
+// paginated fetch loaded — not in modeDetail/modeConfirm/modeResult, where a
+// single selected item isn't paginated even though m.totalPages still holds
+// the underlying list's last known value. Kept terse (no "page" word) to
+// leave the footer's width budget for the hints.
+func (m model) pageIndicator() string {
+	if m.mode != modeBrowsing || m.totalPages <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", m.page, m.totalPages)
+}
+
+// mediaStatusLabel mirrors internal/cli's label for models.MediaStatus.
+// Kept local rather than shared: the TUI intentionally doesn't depend on
+// internal/cli's rendering code.
+func mediaStatusLabel(status models.MediaStatus) string {
+	switch status {
+	case models.MediaStatusUnknown:
+		return "Unknown"
+	case models.MediaStatusPending:
+		return "Pending"
+	case models.MediaStatusProcessing:
+		return "Processing"
+	case models.MediaStatusPartiallyAvailable:
+		return "Partially available"
+	case models.MediaStatusAvailable:
+		return "Available"
+	case models.MediaStatusBlocklisted:
+		return "Blocklisted"
+	case models.MediaStatusDeleted:
+		return "Deleted"
+	default:
+		return "Unknown"
+	}
+}

@@ -1,0 +1,272 @@
+package tui
+
+import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/emzbtw/reel/internal/models"
+)
+
+// chromeLines is how many terminal rows the header and footer each take, so
+// the list gets sized to exactly what's left.
+const chromeLines = 2
+
+// searchPromptWidth is len("Search: "), the literal prefix searchView()
+// renders ahead of the input itself.
+const searchPromptWidth = 8
+
+// searchInputWidth sizes the text input so "Search: " plus its content
+// never bleeds past the terminal width, mirroring how chromeLines sizes the
+// list. The -3 leaves room for textinput's own cursor-overlay allowance
+// (its internal scroll window can run one cell past Width).
+func searchInputWidth(termWidth int) int {
+	w := termWidth - searchPromptWidth - 3
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		h := msg.Height - chromeLines
+		if h < 1 {
+			h = 1
+		}
+		m.list.SetSize(msg.Width, h)
+		m.searchInput.Width = searchInputWidth(msg.Width)
+		// Width alone doesn't reflow textinput's internal scroll window —
+		// that only happens inside SetValue/SetCursor — so nudge it via a
+		// cursor no-op to make the new Width actually take effect.
+		m.searchInput.SetCursor(m.searchInput.Position())
+		return m, nil
+
+	case tea.KeyMsg:
+		// ctrl+c always quits, including while typing a search query. Plain
+		// "q" quits from every other mode, but not modeSearch — "q" is a
+		// perfectly normal character to search for (e.g. "Queen's Gambit").
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "q":
+			if m.mode != modeSearch {
+				return m, tea.Quit
+			}
+		}
+
+	case pageLoadedMsg:
+		if msg.seq != m.loadSeq {
+			return m, nil
+		}
+		m.loading = false
+		m.err = nil
+		m.page, m.totalPages = msg.page, msg.totalPages
+		items := make([]list.Item, len(msg.items))
+		for i, it := range msg.items {
+			items[i] = it
+		}
+		m.list.SetItems(items)
+		m.list.Select(0)
+		return m, nil
+
+	case errMsg:
+		if msg.seq != m.loadSeq {
+			return m, nil
+		}
+		m.loading = false
+		m.err = msg.err
+		return m, nil
+
+	case requestResultMsg:
+		m.loading = false
+		m.lastRequest = msg.req
+		m.err = msg.err
+		m.mode = modeResult
+		return m, nil
+
+	case spinner.TickMsg:
+		if !m.loading {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	}
+
+	switch m.mode {
+	case modeBrowsing:
+		return m.updateBrowsing(msg)
+	case modeSearch:
+		return m.updateSearch(msg)
+	case modeDetail:
+		return m.updateDetail(msg)
+	case modeConfirm:
+		return m.updateConfirm(msg)
+	case modeResult:
+		return m.updateResult(msg)
+	default:
+		return m, nil
+	}
+}
+
+// updateBrowsing intercepts tab (media type toggle), n/p (Seerr-side
+// pagination) and enter (open detail); everything else — including
+// left/right/h/l/pgup/pgdown, which list.Model already binds to scrolling
+// through the current page's items — is forwarded to the list untouched.
+func (m model) updateBrowsing(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	}
+
+	switch keyMsg.String() {
+	case "tab":
+		// Search results already mix movies and TV; there's nothing to
+		// toggle while browsing them.
+		if m.source == sourceSearch {
+			return m, nil
+		}
+		if m.mediaType == models.MediaMovie {
+			m.mediaType = models.MediaTV
+		} else {
+			m.mediaType = models.MediaMovie
+		}
+		m.page = 1
+		return m.startFetch()
+
+	case "n":
+		if m.loading || (m.totalPages > 0 && m.page >= m.totalPages) {
+			return m, nil
+		}
+		m.page++
+		return m.startFetch()
+
+	case "p":
+		if m.loading || m.page <= 1 {
+			return m, nil
+		}
+		m.page--
+		return m.startFetch()
+
+	case "/":
+		m.searchInput.SetValue("")
+		cmd := m.searchInput.Focus()
+		m.mode = modeSearch
+		return m, cmd
+
+	case "esc":
+		// Clear an active search back to plain Discover browsing. No-op
+		// otherwise — nothing else in modeBrowsing binds esc.
+		if m.source != sourceSearch {
+			return m, nil
+		}
+		m.source = sourceDiscover
+		m.query = ""
+		m.page = 1
+		return m.startFetch()
+
+	case "enter":
+		if item, ok := m.list.SelectedItem().(browseItem); ok {
+			m.selected = item
+			m.mode = modeDetail
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+// updateSearch handles text entry for the search query. enter submits (if
+// non-empty) and starts a fetch; esc cancels back to browsing, leaving
+// whatever was already shown untouched.
+func (m model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		return m, cmd
+	}
+
+	switch keyMsg.Type {
+	case tea.KeyEnter:
+		query := strings.TrimSpace(m.searchInput.Value())
+		if query == "" {
+			return m, nil
+		}
+		m.searchInput.Blur()
+		m.mode = modeBrowsing
+		m.source = sourceSearch
+		m.query = query
+		m.page = 1
+		return m.startFetch()
+
+	case tea.KeyEsc:
+		m.searchInput.Blur()
+		m.mode = modeBrowsing
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	return m, cmd
+}
+
+// startFetch bumps loadSeq and kicks off a fetch for the model's current
+// source/mediaType/query/page, discarding any in-flight fetch's eventual
+// response.
+func (m model) startFetch() (tea.Model, tea.Cmd) {
+	m.loadSeq++
+	m.loading = true
+	m.err = nil
+	return m, fetchPageCmd(m.ctx, m.client, m.source, m.mediaType, m.query, m.page, m.loadSeq)
+}
+
+func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "r", "enter":
+		m.mode = modeConfirm
+	case "esc", "b":
+		m.mode = modeBrowsing
+	}
+	return m, nil
+}
+
+func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "y":
+		m.loading = true
+		m.err = nil
+		return m, submitRequestCmd(m.ctx, m.client, m.selected)
+	case "n", "esc":
+		m.mode = modeDetail
+	}
+	return m, nil
+}
+
+// updateResult returns to browsing on any key; the global q/ctrl+c handling
+// above already covers quitting from here.
+func (m model) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.KeyMsg); ok {
+		m.mode = modeBrowsing
+		m.err = nil
+		m.lastRequest = nil
+	}
+	return m, nil
+}
