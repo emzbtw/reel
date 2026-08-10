@@ -49,6 +49,12 @@ Landed:
 Deliberately not included: `--interactive` disambiguation. Ambiguous lines
 are resolved by adding a year to the line rather than by a picker.
 
+Fixes since:
+
+* [x] `reel status` showed "Unknown" for completed requests — `MediaRequestStatus`
+  only mapped PENDING/APPROVED/DECLINED, missing FAILED (4) and COMPLETED (5); and
+  `MediaStatus` was missing BLOCKLISTED (6), which had shifted DELETED to 7
+
 ## v0.4
 
 * Interactive TUI
