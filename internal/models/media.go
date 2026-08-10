@@ -20,7 +20,8 @@ const (
 	MediaStatusProcessing         MediaStatus = 3
 	MediaStatusPartiallyAvailable MediaStatus = 4
 	MediaStatusAvailable          MediaStatus = 5
-	MediaStatusDeleted            MediaStatus = 6
+	MediaStatusBlocklisted        MediaStatus = 6
+	MediaStatusDeleted            MediaStatus = 7
 )
 
 // MediaInfo mirrors the `MediaInfo` schema.

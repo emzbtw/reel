@@ -58,6 +58,10 @@ func requestStatusLabel(status int) string {
 		return "Approved"
 	case 3:
 		return "Declined"
+	case 4:
+		return "Failed"
+	case 5:
+		return "Completed"
 	default:
 		return "Unknown"
 	}
@@ -75,6 +79,8 @@ func mediaStatusLabel(status models.MediaStatus) string {
 		return "Partially available"
 	case models.MediaStatusAvailable:
 		return "Available"
+	case models.MediaStatusBlocklisted:
+		return "Blocklisted"
 	case models.MediaStatusDeleted:
 		return "Deleted"
 	default:

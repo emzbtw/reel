@@ -56,6 +56,46 @@ func TestStatusCmd_JSON(t *testing.T) {
 	}
 }
 
+func TestRequestStatusLabel(t *testing.T) {
+	cases := []struct {
+		status int
+		want   string
+	}{
+		{1, "Pending"},
+		{2, "Approved"},
+		{3, "Declined"},
+		{4, "Failed"},
+		{5, "Completed"},
+		{99, "Unknown"},
+	}
+	for _, c := range cases {
+		if got := requestStatusLabel(c.status); got != c.want {
+			t.Errorf("requestStatusLabel(%d) = %q, want %q", c.status, got, c.want)
+		}
+	}
+}
+
+func TestMediaStatusLabel(t *testing.T) {
+	cases := []struct {
+		status models.MediaStatus
+		want   string
+	}{
+		{models.MediaStatusUnknown, "Unknown"},
+		{models.MediaStatusPending, "Pending"},
+		{models.MediaStatusProcessing, "Processing"},
+		{models.MediaStatusPartiallyAvailable, "Partially available"},
+		{models.MediaStatusAvailable, "Available"},
+		{models.MediaStatusBlocklisted, "Blocklisted"},
+		{models.MediaStatusDeleted, "Deleted"},
+		{models.MediaStatus(99), "Unknown"},
+	}
+	for _, c := range cases {
+		if got := mediaStatusLabel(c.status); got != c.want {
+			t.Errorf("mediaStatusLabel(%d) = %q, want %q", c.status, got, c.want)
+		}
+	}
+}
+
 func TestStatusCmd_NoRequests(t *testing.T) {
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"pageInfo": {"page": 1, "pages": 0, "results": 0}, "results": []}`))
