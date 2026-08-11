@@ -39,11 +39,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h < 1 {
 			h = 1
 		}
-		listWidth := msg.Width - listStyle.GetHorizontalPadding()
+		listWidth := msg.Width - listStyle.GetHorizontalFrameSize()
 		if listWidth < 1 {
 			listWidth = 1
 		}
-		m.list.SetSize(listWidth, h)
+		listHeight := h - listStyle.GetVerticalFrameSize()
+		if listHeight < 1 {
+			listHeight = 1
+		}
+		m.list.SetSize(listWidth, listHeight)
 		m.searchInput.Width = searchInputWidth(msg.Width)
 		// Width alone doesn't reflow textinput's internal scroll window —
 		// that only happens inside SetValue/SetCursor — so nudge it via a

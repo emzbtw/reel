@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/emzbtw/reel/internal/api"
 	"github.com/emzbtw/reel/internal/models"
@@ -46,10 +47,16 @@ type browseItem struct {
 func (i browseItem) FilterValue() string { return i.title }
 func (i browseItem) Title() string       { return i.title }
 func (i browseItem) Description() string {
-	if i.year == "" {
-		return typeLabel(i.mediaType)
+	desc := typeLabel(i.mediaType)
+	if i.year != "" {
+		desc += " · " + i.year
 	}
-	return typeLabel(i.mediaType) + " · " + i.year
+	if i.status != nil {
+		if glyph := statusGlyph(*i.status); glyph != "" {
+			desc += " · " + lipgloss.NewStyle().Foreground(statusColor(*i.status)).Render(glyph)
+		}
+	}
+	return desc
 }
 
 func typeLabel(t models.MediaType) string {
@@ -149,6 +156,27 @@ type model struct {
 
 func newModel(ctx context.Context, client *api.Client) model {
 	delegate := list.NewDefaultDelegate()
+	// Titles stay bold; description (metadata) stays muted regardless of
+	// selection. The selected row is marked by ">" on its title line; its
+	// title text also turns magenta. Title text lands at column 4, under
+	// the "l" of "reel" (accounting for listStyle's column-1 left pad in
+	// view.go): NormalTitle has no border, so its padding (3) covers both
+	// the marker's column and the gap up to column 4; SelectedTitle's
+	// padding (2) covers just the gap, since its border already takes the
+	// marker's column. SelectedDesc/NormalDesc have no marker to account
+	// for, so their padding matches NormalTitle's.
+	delegate.Styles.NormalTitle = lipgloss.NewStyle().Bold(true).Padding(0, 0, 0, 3)
+	delegate.Styles.NormalDesc = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 0, 0, 3)
+	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
+		Border(selectionMarker, false, false, false, true).
+		BorderForeground(colorMagenta).
+		Foreground(colorMagenta).
+		Bold(true).
+		Padding(0, 0, 0, 2)
+	delegate.Styles.SelectedDesc = lipgloss.NewStyle().
+		Foreground(colorMuted).
+		Padding(0, 0, 0, 3)
+	delegate.SetSpacing(0) // default's blank line between items is more gap than these two-line rows need
 	l := list.New(nil, delegate, 0, 0)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)

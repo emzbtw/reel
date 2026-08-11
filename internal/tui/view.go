@@ -9,16 +9,42 @@ import (
 	"github.com/emzbtw/reel/internal/models"
 )
 
-var (
-	headerStyle  = lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	listStyle    = lipgloss.NewStyle().PaddingLeft(1) // same left padding as headerStyle, so the list's selection border lines up with "reel —"
-	searchStyle  = lipgloss.NewStyle().Padding(0, 1)  // same left padding as headerStyle, so "Search:" lines up with "reel —"
-	footerStyle  = lipgloss.NewStyle().Faint(true).Padding(0, 1)
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(0, 1)
-	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Padding(0, 1)
-	boxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
-	promptStyle  = lipgloss.NewStyle().Bold(true).Padding(1, 1)
+// Palette, matching Seerr's own status semantics for the status colors:
+// pending/requested (🎬), processing/downloading (↓), available (✓),
+// declined/failed (✗).
+const (
+	colorMagenta    = lipgloss.Color("#BB9AF7") // selected row: text + selection arrow
+	colorMuted      = lipgloss.Color("#565F89") // secondary text: metadata, hints, page numbers; header background
+	colorHeaderFg   = lipgloss.Color("#C0CAF5") // header text, for contrast against colorMuted
+	colorPending    = lipgloss.Color("#E0AF68")
+	colorProcessing = lipgloss.Color("#7AA2F7")
+	colorAvailable  = lipgloss.Color("#9ECE6A")
+	colorDeclined   = lipgloss.Color("#F7768E")
 )
+
+var (
+	headerStyle = lipgloss.NewStyle().Bold(true).Background(colorMuted).Foreground(colorHeaderFg).Padding(0, 1)
+	// listStyle's left padding matches headerStyle's own, so list rows
+	// start under "reel" the same way "Search:" and error/success lines
+	// do. The delegate title/desc styles in newModel add the rest of the
+	// indent that lands title text under the header's "—".
+	listStyle    = lipgloss.NewStyle().PaddingLeft(1)
+	searchStyle  = lipgloss.NewStyle().Padding(0, 1) // same left padding as headerStyle, so "Search:" lines up with "reel —"
+	footerStyle  = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 1)
+	errorStyle   = lipgloss.NewStyle().Foreground(colorDeclined).Padding(0, 1)
+	successStyle = lipgloss.NewStyle().Foreground(colorAvailable).Padding(0, 1)
+	boxStyle     = lipgloss.NewStyle().Padding(1, 2)
+	promptStyle  = lipgloss.NewStyle().Bold(true).Padding(1, 1)
+	titleStyle   = lipgloss.NewStyle().Bold(true)
+	mutedStyle   = lipgloss.NewStyle().Foreground(colorMuted)
+)
+
+// selectionMarker marks the selected list row in place of a full-height
+// border bar — just a marker on the title line. lipgloss's left border
+// only supports one column per rendered line (a multi-character string
+// cycles one character per *line* of a multi-line box, not multiple
+// columns on the same line), so this is necessarily a single character.
+var selectionMarker = lipgloss.Border{Left: ">"}
 
 // fallbackWidth/fallbackHeight are used only for the brief window before the
 // first tea.WindowSizeMsg arrives (or in tests that never send one) — real
@@ -132,19 +158,25 @@ func (m model) searchView() string {
 func (m model) detailView() string {
 	it := m.selected
 	var b strings.Builder
-	b.WriteString(it.title)
+	b.WriteString(titleStyle.Render(it.title))
 	if it.year != "" {
-		fmt.Fprintf(&b, " (%s)", it.year)
+		fmt.Fprintf(&b, " %s", mutedStyle.Render(fmt.Sprintf("(%s)", it.year)))
 	}
 	b.WriteString("\n")
-	b.WriteString(typeLabel(it.mediaType))
+	b.WriteString(mutedStyle.Render(typeLabel(it.mediaType)))
 	if it.voteAverage > 0 {
-		fmt.Fprintf(&b, "  ★ %.1f", it.voteAverage)
+		fmt.Fprintf(&b, "%s", mutedStyle.Render(fmt.Sprintf("  ★ %.1f", it.voteAverage)))
 	}
 	if it.status != nil {
-		fmt.Fprintf(&b, "  [%s]", mediaStatusLabel(*it.status))
+		fmt.Fprintf(&b, "  %s", statusBadge(*it.status))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	dividerWidth := m.termWidth() - boxStyle.GetHorizontalFrameSize()
+	if dividerWidth < 1 {
+		dividerWidth = 1
+	}
+	b.WriteString(mutedStyle.Render(strings.Repeat("─", dividerWidth)))
+	b.WriteString("\n")
 	if it.overview != "" {
 		b.WriteString(it.overview)
 	} else {
@@ -251,4 +283,49 @@ func mediaStatusLabel(status models.MediaStatus) string {
 	default:
 		return "Unknown"
 	}
+}
+
+// statusColor and statusGlyph give each models.MediaStatus a color and a
+// compact glyph, mirroring Seerr's own status semantics. Blocklisted reads
+// as declined/failed (Seerr won't fulfil it); Deleted and Unknown don't fit
+// any of those buckets, so they render muted with no glyph rather than
+// being forced into one.
+func statusColor(status models.MediaStatus) lipgloss.Color {
+	switch status {
+	case models.MediaStatusPending:
+		return colorPending
+	case models.MediaStatusProcessing:
+		return colorProcessing
+	case models.MediaStatusPartiallyAvailable, models.MediaStatusAvailable:
+		return colorAvailable
+	case models.MediaStatusBlocklisted:
+		return colorDeclined
+	default: // Unknown, Deleted
+		return colorMuted
+	}
+}
+
+func statusGlyph(status models.MediaStatus) string {
+	switch status {
+	case models.MediaStatusPending:
+		return "🎬"
+	case models.MediaStatusProcessing:
+		return "↓"
+	case models.MediaStatusPartiallyAvailable, models.MediaStatusAvailable:
+		return "✓"
+	case models.MediaStatusBlocklisted:
+		return "✗"
+	default: // Unknown, Deleted
+		return ""
+	}
+}
+
+// statusBadge renders a status's glyph (if it has one) and label together in
+// the status's color, e.g. "✓ Available".
+func statusBadge(status models.MediaStatus) string {
+	text := mediaStatusLabel(status)
+	if glyph := statusGlyph(status); glyph != "" {
+		text = glyph + " " + text
+	}
+	return lipgloss.NewStyle().Foreground(statusColor(status)).Render(text)
 }
