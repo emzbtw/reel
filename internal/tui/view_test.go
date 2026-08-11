@@ -23,7 +23,7 @@ func TestView_Browsing(t *testing.T) {
 	m = updated.(model)
 
 	out := m.View()
-	for _, want := range []string{"Browse Movies", "2/10", "Dune", "tab: movie/tv"} {
+	for _, want := range []string{"Discover · Movies", "2/10", "Dune", "tab: movie/tv"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("View() missing %q:\n%s", want, out)
 		}
@@ -44,6 +44,33 @@ func TestView_Search(t *testing.T) {
 	}
 }
 
+// TestHeaderView_ReflectsMode is the regression check for the header being
+// stuck on the Discover movie/tv toggle text regardless of Search mode: it
+// used to only key off m.source (set on submit), so it kept showing
+// "Discover · Movies" the whole time a query was being typed in modeSearch.
+func TestHeaderView_ReflectsMode(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mediaType = models.MediaTV
+
+	if got := m.headerView(); !strings.Contains(got, "Discover · TV") {
+		t.Errorf("headerView() = %q, want it to contain %q", got, "Discover · TV")
+	}
+
+	// While typing, the header shouldn't repeat the live query — the body's
+	// searchView() already shows "Search: <input>" directly below it.
+	m.mode = modeSearch
+	m.searchInput.SetValue("dune")
+	if got := m.headerView(); !strings.Contains(got, "Search") || strings.Contains(got, "dune") {
+		t.Errorf("headerView() while typing = %q, want it to contain %q but not the query", got, "Search")
+	}
+
+	m.mode = modeBrowsing
+	m.source, m.query = sourceSearch, "dune"
+	if got := m.headerView(); !strings.Contains(got, "Search: dune") {
+		t.Errorf("headerView() browsing search results = %q, want it to contain %q", got, "Search: dune")
+	}
+}
+
 func TestView_BrowsingSearchResults(t *testing.T) {
 	m := newModel(context.Background(), nil)
 	m.source, m.query = sourceSearch, "dune"
@@ -52,7 +79,7 @@ func TestView_BrowsingSearchResults(t *testing.T) {
 	m = updated.(model)
 
 	out := m.View()
-	for _, want := range []string{`Search "dune"`, "Dune", "esc: clear"} {
+	for _, want := range []string{"Search: dune", "Dune", "esc: clear"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("View() missing %q:\n%s", want, out)
 		}
@@ -300,20 +327,23 @@ func TestView_PageIndicator_HiddenOutsideBrowsing(t *testing.T) {
 }
 
 // TestView_SearchAlignsWithHeader checks "Search:" starts in the same
-// column as "reel —" on the header line directly above it.
+// column as "reel —" on the header line, with a blank gap row between them.
 func TestView_SearchAlignsWithHeader(t *testing.T) {
 	m := newModel(context.Background(), nil)
 	m.mode = modeSearch
 
 	lines := strings.Split(m.View(), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("View() has %d lines, want at least 2 (header + search row)", len(lines))
+	if len(lines) < 3 {
+		t.Fatalf("View() has %d lines, want at least 3 (header + gap + search row)", len(lines))
+	}
+	if strings.TrimSpace(lines[1]) != "" {
+		t.Errorf("line 1 = %q, want a blank gap row between header and search row", lines[1])
 	}
 	headerIndent := leadingSpaces(lines[0])
-	searchIndent := leadingSpaces(lines[1])
+	searchIndent := leadingSpaces(lines[2])
 	if headerIndent != searchIndent {
 		t.Errorf("header starts at column %d, search row starts at column %d, want equal\nheader: %q\nsearch: %q",
-			headerIndent, searchIndent, lines[0], lines[1])
+			headerIndent, searchIndent, lines[0], lines[2])
 	}
 }
 

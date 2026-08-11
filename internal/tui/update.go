@@ -10,9 +10,10 @@ import (
 	"github.com/emzbtw/reel/internal/models"
 )
 
-// chromeLines is how many terminal rows the header and footer each take, so
-// the list gets sized to exactly what's left.
-const chromeLines = 2
+// chromeLines is how many terminal rows the header, the blank gap row below
+// it, and the footer each take, so the list gets sized to exactly what's
+// left.
+const chromeLines = 3
 
 // searchPromptWidth is len("Search: "), the literal prefix searchView()
 // renders ahead of the input itself.
@@ -38,7 +39,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h < 1 {
 			h = 1
 		}
-		m.list.SetSize(msg.Width, h)
+		listWidth := msg.Width - listStyle.GetHorizontalPadding()
+		if listWidth < 1 {
+			listWidth = 1
+		}
+		m.list.SetSize(listWidth, h)
 		m.searchInput.Width = searchInputWidth(msg.Width)
 		// Width alone doesn't reflow textinput's internal scroll window —
 		// that only happens inside SetValue/SetCursor — so nudge it via a

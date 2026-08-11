@@ -11,7 +11,8 @@ import (
 
 var (
 	headerStyle  = lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	searchStyle  = lipgloss.NewStyle().Padding(0, 1) // same left padding as headerStyle, so "Search:" lines up with "reel —"
+	listStyle    = lipgloss.NewStyle().PaddingLeft(1) // same left padding as headerStyle, so the list's selection border lines up with "reel —"
+	searchStyle  = lipgloss.NewStyle().Padding(0, 1)  // same left padding as headerStyle, so "Search:" lines up with "reel —"
 	footerStyle  = lipgloss.NewStyle().Faint(true).Padding(0, 1)
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Padding(0, 1)
 	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Padding(0, 1)
@@ -86,19 +87,22 @@ func (m model) View() string {
 	}
 	body := lipgloss.Place(m.termWidth(), h, lipgloss.Left, lipgloss.Top, m.bodyView())
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, header, "", body, footer)
 }
 
 func (m model) headerView() string {
+	if m.mode == modeSearch {
+		return m.sizedLine(headerStyle).Render("reel — Search")
+	}
 	if m.source == sourceSearch {
-		return m.sizedLine(headerStyle).Render(fmt.Sprintf("reel — Search %q", m.query))
+		return m.sizedLine(headerStyle).Render("reel — Search: " + m.query)
 	}
 
 	mt := "Movies"
 	if m.mediaType == models.MediaTV {
 		mt = "TV"
 	}
-	return m.sizedLine(headerStyle).Render(fmt.Sprintf("reel — Browse %s", mt))
+	return m.sizedLine(headerStyle).Render("reel — Discover · " + mt)
 }
 
 func (m model) bodyView() string {
@@ -117,7 +121,7 @@ func (m model) bodyView() string {
 	case modeResult:
 		return m.resultView()
 	default:
-		return m.list.View()
+		return listStyle.Render(m.list.View())
 	}
 }
 

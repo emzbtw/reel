@@ -298,8 +298,9 @@ func TestUpdate_WindowSizeMsg_ResizesListAndReflowsEveryScreen(t *testing.T) {
 			if narrow.width != 30 || narrow.height != 20 {
 				t.Fatalf("width/height = %d/%d, want 30/20", narrow.width, narrow.height)
 			}
-			if got := narrow.list.Width(); got != 30 {
-				t.Errorf("list width = %d, want 30 (list should track window size)", got)
+			wantListWidth := 30 - listStyle.GetHorizontalPadding()
+			if got := narrow.list.Width(); got != wantListWidth {
+				t.Errorf("list width = %d, want %d (list should track window size, minus listStyle's padding)", got, wantListWidth)
 			}
 			if got := lipgloss.Width(narrow.View()); got > 30 {
 				t.Errorf("View() at width 30 renders %d cells wide, want <= 30:\n%s", got, narrow.View())
