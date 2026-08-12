@@ -41,6 +41,8 @@ type browseItem struct {
 	year        string
 	overview    string
 	voteAverage float64
+	voteCount   int
+	popularity  float64
 	status      *models.MediaStatus // nil when Seerr has no library record for it
 }
 
@@ -74,6 +76,8 @@ func movieItem(m models.MovieResult) browseItem {
 		year:        year(m.ReleaseDate),
 		overview:    m.Overview,
 		voteAverage: m.VoteAverage,
+		voteCount:   m.VoteCount,
+		popularity:  m.Popularity,
 	}
 	if m.MediaInfo != nil {
 		s := m.MediaInfo.Status
@@ -90,6 +94,8 @@ func tvItem(t models.TvResult) browseItem {
 		year:        year(t.FirstAirDate),
 		overview:    t.Overview,
 		voteAverage: t.VoteAverage,
+		voteCount:   t.VoteCount,
+		popularity:  t.Popularity,
 	}
 	if t.MediaInfo != nil {
 		s := t.MediaInfo.Status
@@ -108,6 +114,10 @@ func year(date string) string {
 // searchItems flattens a search result list down to browseItems, dropping
 // person results (they can't be requested). Mirrors internal/cli's
 // mediaOnly, kept local rather than shared per the TUI's own view logic.
+//
+// Seerr's relevance ordering is kept as-is except where promoteDominant
+// nudges a landslide-more-popular result above weak matches Seerr happened
+// to rank ahead of it — see promoteDominant's doc comment.
 func searchItems(results []models.SearchResult) []browseItem {
 	items := make([]browseItem, 0, len(results))
 	for _, r := range results {
@@ -122,7 +132,53 @@ func searchItems(results []models.SearchResult) []browseItem {
 			}
 		}
 	}
+	promoteDominant(items)
 	return items
+}
+
+// Dominance thresholds for promoteDominant, mirroring
+// internal/obsidian/sync.go's dominanceRatio/minVotesToJudge — same
+// judgment call (is this a landslide, not a coin-flip), duplicated locally
+// since sync.go's constants are unexported and the two use cases are
+// otherwise unrelated.
+const (
+	searchDominanceRatio  = 10
+	searchMinVotesToJudge = 20
+)
+
+// dominatesForSearch reports whether top is so far ahead of second, by vote
+// count or (when second is too new/obscure to have accumulated real votes)
+// popularity, that it can be promoted above it without asking. Ported from
+// internal/obsidian/sync.go's dominates — same reasoning, applied to a
+// browseItem pair instead of a Candidate pair.
+func dominatesForSearch(top, second browseItem) bool {
+	if second.voteCount >= searchMinVotesToJudge {
+		return top.voteCount >= searchDominanceRatio*second.voteCount
+	}
+	return top.popularity > 0 && top.popularity >= searchDominanceRatio*second.popularity
+}
+
+// promoteDominant nudges search results toward "the one people mean" without
+// discarding Seerr's relevance ordering wholesale: a short or ambiguous
+// query (e.g. "cher") can rank a well-known title below several low-signal
+// partial matches, since Seerr/TMDB's multi-search relevance doesn't weigh
+// popularity heavily for partial matches.
+//
+// This is deliberately not a popularity sort — that would risk burying a
+// precise, exact-title match under a generically popular but unrelated
+// title. Instead it's a single stable insertion-sort-style pass: an item
+// only moves up past the item immediately ahead of it, and only while it
+// dominates that specific neighbor (10x its vote count, or 10x its
+// popularity when neither has enough votes to judge on). Two items that are
+// merely somewhat different in popularity never swap, so Seerr's ordering
+// wins by default; a landslide-popular result can still climb past several
+// weak items, one dominated neighbor at a time.
+func promoteDominant(items []browseItem) {
+	for i := 1; i < len(items); i++ {
+		for j := i; j > 0 && dominatesForSearch(items[j], items[j-1]); j-- {
+			items[j], items[j-1] = items[j-1], items[j]
+		}
+	}
 }
 
 // model is the root bubbletea model driving reel's TUI.

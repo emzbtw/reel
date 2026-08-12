@@ -150,6 +150,64 @@ func TestFetchPageCmd_Search(t *testing.T) {
 	}
 }
 
+// searchItems / promoteDominant
+
+// TestSearchItems_PromotesDominantMatch is the "cher" scenario: a short,
+// ambiguous query where Seerr's relevance ordering ranks a couple of
+// low-signal partial matches ahead of a well-known result. Chernobyl's vote
+// count and popularity dominate both of the weak matches ahead of it (well
+// past the 10x bar), so it should climb to the top despite starting last.
+func TestSearchItems_PromotesDominantMatch(t *testing.T) {
+	results := []models.SearchResult{
+		{MediaType: models.MediaMovie, Movie: &models.MovieResult{ID: 1, Title: "Cher Ami", VoteCount: 5, Popularity: 2.0}},
+		{MediaType: models.MediaMovie, Movie: &models.MovieResult{ID: 2, Title: "Cheryl's Diary", VoteCount: 3, Popularity: 1.0}},
+		{MediaType: models.MediaTV, TV: &models.TvResult{ID: 3, Name: "Chernobyl", VoteCount: 5000, Popularity: 120.0}},
+	}
+
+	items := searchItems(results)
+
+	if len(items) != 3 {
+		t.Fatalf("len(items) = %d, want 3", len(items))
+	}
+	if items[0].title != "Chernobyl" {
+		t.Errorf("items[0].title = %q, want %q (should be promoted to the top)", items[0].title, "Chernobyl")
+	}
+}
+
+// TestSearchItems_PreciseQueryUnaffected checks the case the promotion logic
+// must not disturb: a precise query where Seerr already ranks the intended
+// match first, with a second candidate that's close but not dominant (well
+// under the 10x bar). Order must be left exactly as Seerr returned it.
+func TestSearchItems_PreciseQueryUnaffected(t *testing.T) {
+	results := []models.SearchResult{
+		{MediaType: models.MediaMovie, Movie: &models.MovieResult{ID: 1, Title: "The Matrix", VoteCount: 25000, Popularity: 80.0}},
+		{MediaType: models.MediaMovie, Movie: &models.MovieResult{ID: 2, Title: "The Matrix Reloaded", VoteCount: 15000, Popularity: 60.0}},
+	}
+
+	items := searchItems(results)
+
+	if len(items) != 2 || items[0].title != "The Matrix" || items[1].title != "The Matrix Reloaded" {
+		t.Errorf("items = %+v, want unchanged [The Matrix, The Matrix Reloaded]", items)
+	}
+}
+
+// TestSearchItems_NoSignalNoReorder checks that results with no vote/
+// popularity signal at all (e.g. unreleased titles) are never reordered —
+// dominatesForSearch's zero-popularity guard must not misfire into treating
+// "0 >= 10*0" as a win.
+func TestSearchItems_NoSignalNoReorder(t *testing.T) {
+	results := []models.SearchResult{
+		{MediaType: models.MediaMovie, Movie: &models.MovieResult{ID: 1, Title: "Unreleased A"}},
+		{MediaType: models.MediaMovie, Movie: &models.MovieResult{ID: 2, Title: "Unreleased B"}},
+	}
+
+	items := searchItems(results)
+
+	if len(items) != 2 || items[0].title != "Unreleased A" || items[1].title != "Unreleased B" {
+		t.Errorf("items = %+v, want unchanged [Unreleased A, Unreleased B]", items)
+	}
+}
+
 func TestSubmitRequestCmd(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/request" {
