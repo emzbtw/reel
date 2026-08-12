@@ -6,7 +6,39 @@ This project is a terminal-first companion for Seerr, the self-hosted media requ
 
 Rather than replacing Seerr's own web UI, it provides a command line, a TUI, and Obsidian integration for the same discovery and requesting workflow.
 
-The long-term goal is to create a tool that feels as natural to use as `lazygit`, `btop`, or `git`—fast, keyboard-driven, scriptable, and enjoyable to use.
+The long-term goal is to create a tool that feels as natural to use as `lazygit`, `btop`, or `nom`—fast, keyboard-driven, scriptable, and enjoyable to use.
+
+---
+
+# Installation
+
+## Via Nix flake
+
+reel is packaged as a Nix flake.
+
+Build and run directly:
+
+    nix build
+    ./result/bin/reel --help
+
+Or install into your profile:
+
+    nix profile install github:emzbtw/reel
+
+## Configuration
+
+reel needs a Seerr instance to talk to. Create a config file at
+`~/.config/reel/config.toml` (respects `$XDG_CONFIG_HOME`):
+
+    seerr_url = "https://your-seerr-instance"
+    seerr_api_key = "your-seerr-api-key"
+
+Find your API key in Seerr under Settings → General. Alternatively,
+set `REEL_SEERR_URL` and `REEL_SEERR_API_KEY` as environment
+variables — these override the config file.
+
+For Obsidian sync, also set `obsidian_notes` to a list of note paths
+in the same config file.
 
 ---
 
