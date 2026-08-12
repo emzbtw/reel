@@ -306,6 +306,36 @@ func TestView_PageIndicator_BottomRight(t *testing.T) {
 	}
 }
 
+// TestView_PageIndicator_FilteredNoteOnThinSearchPage checks that a search
+// page which came back thin because person results were filtered out says
+// so, rather than just rendering a sparse list with no explanation.
+func TestView_PageIndicator_FilteredNoteOnThinSearchPage(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.source = sourceSearch
+	updated, _ := m.Update(pageLoadedMsg{page: 9, totalPages: 275, filtered: 15, items: []browseItem{testItem()}})
+	m = updated.(model)
+
+	got := m.pageIndicator()
+	want := "9/275 · 1 shown (15 filtered)"
+	if got != want {
+		t.Errorf("pageIndicator() = %q, want %q", got, want)
+	}
+}
+
+// TestView_PageIndicator_NoFilteredNoteWhenNothingFiltered checks the note
+// only appears when a page actually lost results to filtering — not on
+// every search page, and never on Discover (which never filters).
+func TestView_PageIndicator_NoFilteredNoteWhenNothingFiltered(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.source = sourceSearch
+	updated, _ := m.Update(pageLoadedMsg{page: 1, totalPages: 275, filtered: 0, items: []browseItem{testItem()}})
+	m = updated.(model)
+
+	if got := m.pageIndicator(); got != "1/275" {
+		t.Errorf("pageIndicator() = %q, want %q (no filtered note when filtered=0)", got, "1/275")
+	}
+}
+
 // TestView_PageIndicator_HiddenOutsideBrowsing checks the badge doesn't
 // leak into detail/confirm/result footers just because m.totalPages still
 // holds the underlying browse session's value — pagination isn't a real

@@ -195,6 +195,9 @@ type model struct {
 
 	list             list.Model
 	page, totalPages int
+	// filtered is the current page's dropped-result count from the most
+	// recent pageLoadedMsg — see pageLoadedMsg.filtered.
+	filtered int
 	// loadSeq tags each fetch so a pageLoadedMsg/errMsg from a fetch that's
 	// no longer current (e.g. the user toggled type or paged again before
 	// it returned) is discarded instead of clobbering newer state.
@@ -273,6 +276,12 @@ type pageLoadedMsg struct {
 	items      []browseItem
 	page       int
 	totalPages int
+	// filtered is how many raw results this page's fetch dropped (search
+	// only — person results, which can't be requested). Seerr paginates
+	// the raw, unfiltered set, so a page can come back much thinner than
+	// its neighbors purely because it happened to be person-heavy; this
+	// lets the UI say so instead of just looking sparse.
+	filtered int
 }
 
 type errMsg struct {
@@ -298,7 +307,9 @@ func fetchPageCmd(ctx context.Context, client *api.Client, src source, mediaType
 			if err != nil {
 				return errMsg{seq: seq, err: err}
 			}
-			return pageLoadedMsg{seq: seq, items: searchItems(results.Results), page: results.Page, totalPages: results.TotalPages}
+			items := searchItems(results.Results)
+			filtered := len(results.Results) - len(items)
+			return pageLoadedMsg{seq: seq, items: items, page: results.Page, totalPages: results.TotalPages, filtered: filtered}
 		}
 
 		if mediaType == models.MediaTV {

@@ -75,6 +75,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = nil
 		m.page, m.totalPages = msg.page, msg.totalPages
+		m.filtered = msg.filtered
 		items := make([]list.Item, len(msg.items))
 		for i, it := range msg.items {
 			items[i] = it

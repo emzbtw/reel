@@ -254,11 +254,22 @@ func (m model) footerHints() string {
 // single selected item isn't paginated even though m.totalPages still holds
 // the underlying list's last known value. Kept terse (no "page" word) to
 // leave the footer's width budget for the hints.
+//
+// Search results append a "shown (filtered)" note whenever this page came
+// back thinner than usual: Seerr paginates the raw, unfiltered result set
+// (movies/TV/people together), so a person-heavy page can drop most of its
+// 20 raw results once person results (which can't be requested) are
+// filtered out — this makes clear that's filtering, not a bug, rather than
+// just leaving the list looking sparse.
 func (m model) pageIndicator() string {
 	if m.mode != modeBrowsing || m.totalPages <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d/%d", m.page, m.totalPages)
+	page := fmt.Sprintf("%d/%d", m.page, m.totalPages)
+	if m.source == sourceSearch && m.filtered > 0 {
+		page += fmt.Sprintf(" · %d shown (%d filtered)", len(m.list.Items()), m.filtered)
+	}
+	return page
 }
 
 // mediaStatusLabel mirrors internal/cli's label for models.MediaStatus.
