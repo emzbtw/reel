@@ -20,7 +20,7 @@
       src = ./.;
       subPackages = ["cmd/reel"];
 
-      vendorHash = "sha256-/hdb5+3IMAUunZOLPd9MsSwu7N9q5rfgpC7oc9g2hkE=";
+      vendorHash = "sha256-ErR7blnZT7sBMv/HUKwj5Ow5O7EDUjcl6QDEJ2OUGCQ=";
 
       meta = {
         description = "Terminal-first CLI/TUI companion for Seerr";
