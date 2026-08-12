@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/emzbtw/reel/internal/api"
 	"github.com/emzbtw/reel/internal/config"
@@ -38,6 +40,10 @@ func keyMsg(s string) tea.KeyMsg {
 
 func testItem() browseItem {
 	return browseItem{id: 42, mediaType: models.MediaMovie, title: "Dune", year: "2021"}
+}
+
+func testRequestItem() requestItem {
+	return requestItem{id: 9, requestStatus: 1, mediaType: models.MediaMovie, tmdbID: 42, mediaStatus: models.MediaStatusPending, createdAt: "2024-01-15T10:30:00.000Z"}
 }
 
 // fetchPageCmd/submitRequestCmd
@@ -229,6 +235,287 @@ func TestSubmitRequestCmd(t *testing.T) {
 	}
 }
 
+// TestRequestItem_TitleTagsMovieVsTV checks Title's "(Movie)"/"(TV)" suffix
+// tracks mediaType, both with a resolved title and with the TMDB-ID
+// fallback.
+func TestRequestItem_TitleTagsMovieVsTV(t *testing.T) {
+	movie := requestItem{tmdbID: 438631, mediaType: models.MediaMovie, title: "Dune"}
+	if got := movie.Title(); got != "Dune (Movie)" {
+		t.Errorf("Title() = %q, want %q", got, "Dune (Movie)")
+	}
+
+	tv := requestItem{tmdbID: 87108, mediaType: models.MediaTV, title: "Chernobyl"}
+	if got := tv.Title(); got != "Chernobyl (TV)" {
+		t.Errorf("Title() = %q, want %q", got, "Chernobyl (TV)")
+	}
+
+	unresolved := requestItem{tmdbID: 87108, mediaType: models.MediaTV}
+	if got := unresolved.Title(); got != "TMDB 87108 (TV)" {
+		t.Errorf("Title() = %q, want %q (fallback + tag)", got, "TMDB 87108 (TV)")
+	}
+}
+
+// TestRequestItem_TitleIncludesYear checks the year, once resolved, is
+// woven into the same tag as the movie/tv label ("(2021 · Movie)") rather
+// than a separate tag, and is simply omitted (not left as a blank) when
+// unresolved.
+func TestRequestItem_TitleIncludesYear(t *testing.T) {
+	withYear := requestItem{tmdbID: 438631, mediaType: models.MediaMovie, title: "Dune", year: "2021"}
+	if got := withYear.Title(); got != "Dune (2021 · Movie)" {
+		t.Errorf("Title() = %q, want %q", got, "Dune (2021 · Movie)")
+	}
+
+	withoutYear := requestItem{tmdbID: 438631, mediaType: models.MediaMovie, title: "Dune"}
+	if got := withoutYear.Title(); got != "Dune (Movie)" {
+		t.Errorf("Title() = %q, want %q (no year, no dangling separator)", got, "Dune (Movie)")
+	}
+}
+
+// TestRequestItem_NameHasNoEmbeddedANSI is the regression check: name()
+// must stay plain text, with none of Title's embedded ANSI color codes —
+// callers that pass it through fmt's %q (e.g. requestResultView's "Deleted
+// %q.") depend on that, since %q escapes control characters (including the
+// raw ESC byte in an ANSI code) into literal "\x1b[...m" text instead of
+// letting the terminal render it as color.
+// TestRequestItem_NameHasNoEmbeddedANSI forces a real color profile for the
+// duration of the test (and restores it after): lipgloss auto-detects "no
+// TTY" under `go test` and silently strips all styling, which would let
+// this test pass even with the bug present — Title() only actually embeds
+// ANSI when lipgloss believes it's writing to a color-capable terminal,
+// exactly the condition under which the reported bug showed up live.
+func TestRequestItem_NameHasNoEmbeddedANSI(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(orig) })
+
+	it := requestItem{tmdbID: 438631, mediaType: models.MediaMovie, title: "Dune", year: "2021"}
+
+	name := it.name()
+	if name != "Dune" {
+		t.Errorf("name() = %q, want %q", name, "Dune")
+	}
+	if strings.Contains(name, "\x1b") {
+		t.Errorf("name() = %q, contains a raw ESC byte — must stay plain text", name)
+	}
+
+	// Title(), by contrast, does embed one (in its muted tag) — confirming
+	// this test would actually catch a caller that regresses back to using
+	// Title() somewhere a plain string is required.
+	if !strings.Contains(it.Title(), "\x1b") {
+		t.Errorf("Title() = %q, want it to contain an ANSI escape (sanity check that name/Title actually differ under a real color profile)", it.Title())
+	}
+
+	// The bug as it actually manifested: %q-ing an ANSI-containing string
+	// escapes the raw ESC byte into literal "\x1b[...m" text.
+	if quoted := fmt.Sprintf("%q", it.Title()); !strings.Contains(quoted, `\x1b`) {
+		t.Errorf("fmt.Sprintf(%%q, Title()) = %s, want it to demonstrate the escaping (sanity check)", quoted)
+	}
+	if quoted := fmt.Sprintf("%q", it.name()); strings.Contains(quoted, `\x1b`) {
+		t.Errorf("fmt.Sprintf(%%q, name()) = %s, want no escaped ANSI — this is the actual fix", quoted)
+	}
+}
+
+// TestRequestItemOf_CarriesSeasons checks a TV request's per-season status
+// carries straight through from models.MediaRequest into requestItem
+// (movies never have any, so there's nothing to check on that side beyond
+// the zero value already covering it).
+func TestRequestItemOf_CarriesSeasons(t *testing.T) {
+	r := models.MediaRequest{
+		ID: 9, Status: 5, Type: models.MediaTV,
+		Media: models.MediaInfo{TmdbID: 87108, Status: models.MediaStatusAvailable},
+		Seasons: []models.RequestSeason{
+			{ID: 1, SeasonNumber: 1, Status: models.MediaStatusAvailable},
+			{ID: 2, SeasonNumber: 2, Status: models.MediaStatusProcessing},
+		},
+	}
+
+	got := requestItemOf(r)
+
+	if len(got.seasons) != 2 {
+		t.Fatalf("len(seasons) = %d, want 2", len(got.seasons))
+	}
+	if got.seasons[0].SeasonNumber != 1 || got.seasons[0].Status != models.MediaStatusAvailable {
+		t.Errorf("seasons[0] = %+v, want season 1, Available", got.seasons[0])
+	}
+	if got.seasons[1].SeasonNumber != 2 || got.seasons[1].Status != models.MediaStatusProcessing {
+		t.Errorf("seasons[1] = %+v, want season 2, Processing", got.seasons[1])
+	}
+}
+
+// fetchRequestsCmd/deleteRequestCmd
+
+func TestFetchRequestsCmd_Success(t *testing.T) {
+	var movieCalls int
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/request":
+			if got := r.URL.Query().Get("take"); got != "20" {
+				t.Errorf("take param = %q, want %q", got, "20")
+			}
+			if got := r.URL.Query().Get("skip"); got != "20" {
+				t.Errorf("skip param = %q, want %q (page 2)", got, "20")
+			}
+			w.Write([]byte(`{
+				"pageInfo": {"page": 2, "pages": 5, "results": 100},
+				"results": [
+					{"id": 9, "status": 1, "type": "movie", "media": {"id": 1, "tmdbId": 42, "status": 2}, "createdAt": "2024-01-15T10:30:00.000Z"}
+				]
+			}`))
+		case "/api/v1/movie/42":
+			movieCalls++
+			w.Write([]byte(`{"title": "Dune", "mediaInfo": {"id": 1, "tmdbId": 42, "status": 2}}`))
+		default:
+			t.Errorf("path = %q, want /api/v1/request or /api/v1/movie/42", r.URL.Path)
+		}
+	})
+
+	msg := fetchRequestsCmd(context.Background(), client, newTitleCache(), 2, 7)()
+	loaded, ok := msg.(requestsPageLoadedMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want requestsPageLoadedMsg", msg)
+	}
+	if loaded.seq != 7 || loaded.page != 2 || loaded.totalPages != 5 {
+		t.Errorf("loaded = %+v, want seq=7 page=2 totalPages=5", loaded)
+	}
+	if len(loaded.items) != 1 || loaded.items[0].id != 9 || loaded.items[0].tmdbID != 42 {
+		t.Errorf("loaded.items = %+v, want a single request id=9 tmdbID=42", loaded.items)
+	}
+	if loaded.items[0].title != "Dune" {
+		t.Errorf("loaded.items[0].title = %q, want %q (resolved via MediaTitle)", loaded.items[0].title, "Dune")
+	}
+	if movieCalls != 1 {
+		t.Errorf("movie detail was fetched %d times, want exactly 1", movieCalls)
+	}
+}
+
+func TestFetchRequestsCmd_Error(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"message":"nope"}`))
+	})
+
+	msg := fetchRequestsCmd(context.Background(), client, newTitleCache(), 1, 3)()
+	errored, ok := msg.(errMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want errMsg", msg)
+	}
+	if errored.seq != 3 {
+		t.Errorf("errored.seq = %d, want 3", errored.seq)
+	}
+	if !errors.Is(errored.err, api.ErrUnauthorized) {
+		t.Errorf("errored.err = %v, want it to wrap api.ErrUnauthorized", errored.err)
+	}
+}
+
+// resolveTitles
+
+func TestResolveTitles_CacheHitSkipsFetch(t *testing.T) {
+	var calls int
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte(`{"title": "Dune", "mediaInfo": {"id": 1, "tmdbId": 42, "status": 2}}`))
+	})
+	cache := newTitleCache()
+	cache.set(42, api.MediaSummary{Title: "Dune (cached)", Year: "1984"})
+
+	items := []requestItem{{id: 9, mediaType: models.MediaMovie, tmdbID: 42}}
+	resolveTitles(context.Background(), client, cache, items)
+
+	if items[0].title != "Dune (cached)" || items[0].year != "1984" {
+		t.Errorf("items[0] title/year = %q/%q, want %q/%q (from cache)", items[0].title, items[0].year, "Dune (cached)", "1984")
+	}
+	if calls != 0 {
+		t.Errorf("MediaSummary was fetched %d times, want 0 (cache hit)", calls)
+	}
+}
+
+func TestResolveTitles_CacheMissFetchesAndPopulatesCache(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tv/87108" {
+			t.Errorf("path = %q, want /api/v1/tv/87108", r.URL.Path)
+		}
+		w.Write([]byte(`{"name": "Chernobyl", "firstAirDate": "2019-05-06", "mediaInfo": {"id": 1, "tmdbId": 87108, "status": 5}}`))
+	})
+	cache := newTitleCache()
+
+	items := []requestItem{{id: 9, mediaType: models.MediaTV, tmdbID: 87108}}
+	resolveTitles(context.Background(), client, cache, items)
+
+	if items[0].title != "Chernobyl" || items[0].year != "2019" {
+		t.Errorf("items[0] title/year = %q/%q, want %q/%q", items[0].title, items[0].year, "Chernobyl", "2019")
+	}
+	if got, ok := cache.get(87108); !ok || got.Title != "Chernobyl" || got.Year != "2019" {
+		t.Errorf("cache.get(87108) = %+v, %v, want Title=Chernobyl Year=2019, true (populated for next time)", got, ok)
+	}
+}
+
+// TestResolveTitles_FailedLookupDoesNotFailThePage checks a single item's
+// failed title lookup (e.g. a since-deleted TMDB entry) doesn't block the
+// rest of the page: it just leaves that item's title empty, falling back
+// to its TMDB ID via requestItem.Title, while unrelated items still
+// resolve normally.
+func TestResolveTitles_FailedLookupDoesNotFailThePage(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/movie/1" {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		w.Write([]byte(`{"title": "Dune", "mediaInfo": {"id": 1, "tmdbId": 42, "status": 2}}`))
+	})
+	cache := newTitleCache()
+
+	items := []requestItem{
+		{id: 8, mediaType: models.MediaMovie, tmdbID: 1},
+		{id: 9, mediaType: models.MediaMovie, tmdbID: 42},
+	}
+	resolveTitles(context.Background(), client, cache, items)
+
+	if items[0].title != "" {
+		t.Errorf("items[0].title = %q, want empty (lookup failed)", items[0].title)
+	}
+	if got := items[0].Title(); !strings.HasPrefix(got, "TMDB 1 ") {
+		t.Errorf("items[0].Title() = %q, want it to start with the fallback %q", got, "TMDB 1 ")
+	}
+	if items[1].title != "Dune" {
+		t.Errorf("items[1].title = %q, want %q (unaffected by items[0]'s failure)", items[1].title, "Dune")
+	}
+}
+
+func TestDeleteRequestCmd_Success(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/request/9" {
+			t.Errorf("method/path = %s %s, want DELETE /api/v1/request/9", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	msg := deleteRequestCmd(context.Background(), client, 9)()
+	result, ok := msg.(deleteResultMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want deleteResultMsg", msg)
+	}
+	if result.id != 9 || result.err != nil {
+		t.Errorf("result = %+v, want id=9 err=nil", result)
+	}
+}
+
+func TestDeleteRequestCmd_Error(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message":"nope"}`))
+	})
+
+	msg := deleteRequestCmd(context.Background(), client, 9)()
+	result, ok := msg.(deleteResultMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want deleteResultMsg", msg)
+	}
+	if result.id != 9 || result.err == nil {
+		t.Errorf("result = %+v, want id=9 non-nil err", result)
+	}
+}
+
 // Update: async message handling
 
 func TestUpdate_PageLoaded_SetsListAndClearsLoading(t *testing.T) {
@@ -298,6 +585,82 @@ func TestUpdate_ErrMsg_CurrentSeqSets(t *testing.T) {
 	}
 }
 
+func TestUpdate_RequestsPageLoaded_SetsListAndClearsLoading(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.loading = true
+
+	updated, _ := m.Update(requestsPageLoadedMsg{
+		seq: 0, page: 2, totalPages: 5,
+		items: []requestItem{testRequestItem()},
+	})
+	got := updated.(model)
+
+	if got.loading {
+		t.Error("loading = true, want false after requestsPageLoadedMsg")
+	}
+	if got.requestsPage != 2 || got.requestsTotalPages != 5 {
+		t.Errorf("requestsPage/requestsTotalPages = %d/%d, want 2/5", got.requestsPage, got.requestsTotalPages)
+	}
+	if len(got.list.Items()) != 1 {
+		t.Errorf("len(list.Items()) = %d, want 1", len(got.list.Items()))
+	}
+}
+
+func TestUpdate_RequestsPageLoaded_StaleSeqDiscarded(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.loading = true
+	m.loadSeq = 2
+
+	updated, _ := m.Update(requestsPageLoadedMsg{seq: 1, page: 99, totalPages: 99})
+	got := updated.(model)
+
+	if !got.loading {
+		t.Error("loading = false, want true: a stale requestsPageLoadedMsg should be ignored")
+	}
+	if got.requestsPage == 99 {
+		t.Error("requestsPage was updated from a stale requestsPageLoadedMsg")
+	}
+}
+
+func TestUpdate_DeleteResult_SuccessTransitionsToRequestResult(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestConfirm
+	m.loading = true
+
+	updated, _ := m.Update(deleteResultMsg{id: 9, err: nil})
+	got := updated.(model)
+
+	if got.mode != modeRequestResult {
+		t.Errorf("mode = %v, want modeRequestResult", got.mode)
+	}
+	if got.loading {
+		t.Error("loading = true, want false after deleteResultMsg")
+	}
+	if got.deletedRequestID != 9 {
+		t.Errorf("deletedRequestID = %d, want 9", got.deletedRequestID)
+	}
+}
+
+func TestUpdate_DeleteResult_ErrorTransitionsToRequestResult(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestConfirm
+	m.loading = true
+
+	wantErr := errors.New("boom")
+	updated, _ := m.Update(deleteResultMsg{id: 9, err: wantErr})
+	got := updated.(model)
+
+	if got.mode != modeRequestResult {
+		t.Errorf("mode = %v, want modeRequestResult", got.mode)
+	}
+	if got.err != wantErr {
+		t.Errorf("err = %v, want %v", got.err, wantErr)
+	}
+	if got.deletedRequestID != 0 {
+		t.Errorf("deletedRequestID = %d, want 0 (unset on failure)", got.deletedRequestID)
+	}
+}
+
 // Update: window resize
 
 func TestUpdate_WindowSizeMsg_ResizesListAndReflowsEveryScreen(t *testing.T) {
@@ -346,6 +709,12 @@ func TestUpdate_WindowSizeMsg_ResizesListAndReflowsEveryScreen(t *testing.T) {
 			m.err = errors.New(strings.Repeat("failure ", 60))
 			return m
 		}, false},
+		{"requests", func() model {
+			m := newModel(context.Background(), nil)
+			m.mode = modeRequests
+			updated, _ := m.Update(requestsPageLoadedMsg{items: []requestItem{testRequestItem()}})
+			return updated.(model)
+		}, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := tt.m()
@@ -791,10 +1160,11 @@ func TestUpdate_Confirm_YSubmits(t *testing.T) {
 }
 
 // TestUpdate_Confirm_DefaultIsNo checks the [y/N] convention shared with the
-// CLI's request/delete commands: only "y" submits, everything else
-// (including a bare enter) is a no-op or cancels back to detail.
+// CLI's request/delete commands: only "y" submits; "n"/"esc"/a bare "enter"
+// (taking the shown default) all cancel back to detail; anything else is a
+// no-op.
 func TestUpdate_Confirm_DefaultIsNo(t *testing.T) {
-	for _, k := range []string{"n", "esc"} {
+	for _, k := range []string{"n", "esc", "enter"} {
 		m := newModel(context.Background(), nil)
 		m.mode = modeConfirm
 		m.selected = testItem()
@@ -840,10 +1210,270 @@ func TestUpdate_Result_AnyKeyReturnsToBrowsing(t *testing.T) {
 	}
 }
 
+// Update: requests mode
+
+func TestUpdate_Browsing_SEntersRequestsAndFetches(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/request" {
+			t.Errorf("path = %q, want /api/v1/request", r.URL.Path)
+		}
+		w.Write([]byte(`{"pageInfo": {"page": 1, "pages": 1, "results": 0}, "results": []}`))
+	})
+	m := newModel(context.Background(), client)
+
+	updated, cmd := m.Update(keyMsg("s"))
+	got := updated.(model)
+
+	if got.mode != modeRequests {
+		t.Errorf("mode = %v, want modeRequests", got.mode)
+	}
+	if !got.loading {
+		t.Error("loading = false, want true")
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want a fetch command")
+	}
+	if _, ok := cmd().(requestsPageLoadedMsg); !ok {
+		t.Error("cmd() did not fetch requests as expected")
+	}
+}
+
+func TestUpdate_Requests_EnterOpensRequestDetail(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequests
+	updated, _ := m.Update(requestsPageLoadedMsg{items: []requestItem{testRequestItem()}})
+	m = updated.(model)
+
+	updated, _ = m.Update(keyMsg("enter"))
+	got := updated.(model)
+
+	if got.mode != modeRequestDetail {
+		t.Errorf("mode = %v, want modeRequestDetail", got.mode)
+	}
+	if got.selectedRequest.id != 9 {
+		t.Errorf("selectedRequest = %+v, want id 9", got.selectedRequest)
+	}
+}
+
+func TestUpdate_Requests_PageNavigation(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequests
+	m.requestsPage, m.requestsTotalPages = 2, 5
+
+	// "p" (prev) and "n" (next) both fetch when in range.
+	if _, cmd := m.Update(keyMsg("n")); cmd == nil {
+		t.Error("\"n\" with page < totalPages: cmd = nil, want a fetch command")
+	}
+	if _, cmd := m.Update(keyMsg("p")); cmd == nil {
+		t.Error("\"p\" with page > 1: cmd = nil, want a fetch command")
+	}
+
+	// Bounds: can't go below page 1 or past totalPages.
+	atStart := m
+	atStart.requestsPage = 1
+	if _, cmd := atStart.Update(keyMsg("p")); cmd != nil {
+		t.Error("\"p\" at page 1: cmd != nil, want no-op")
+	}
+	atEnd := m
+	atEnd.requestsPage = 5
+	if _, cmd := atEnd.Update(keyMsg("n")); cmd != nil {
+		t.Error("\"n\" at last page: cmd != nil, want no-op")
+	}
+
+	// Already loading: further page requests are ignored.
+	loading := m
+	loading.loading = true
+	if _, cmd := loading.Update(keyMsg("n")); cmd != nil {
+		t.Error("\"n\" while loading: cmd != nil, want no-op")
+	}
+}
+
+// TestUpdate_Requests_EscReturnsToBrowsingAndRefetches proves two things at
+// once: leaving modeRequests refetches Discover/Search (m.list was just
+// overwritten with requests, so the old browse contents are gone), and it
+// does so using whatever source/query/page was active before "s" was
+// pressed — not a reset to plain Discover.
+func TestUpdate_Requests_EscReturnsToBrowsingAndRefetches(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Errorf("path = %q, want /api/v1/search (should resume the search that was active before \"s\")", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("query"); got != "dune" {
+			t.Errorf("query param = %q, want %q", got, "dune")
+		}
+		w.Write([]byte(`{"page": 1, "totalPages": 1, "totalResults": 0, "results": []}`))
+	})
+	m := newModel(context.Background(), client)
+	m.source, m.query, m.page = sourceSearch, "dune", 3
+	m.mode = modeRequests
+
+	updated, cmd := m.Update(keyMsg("esc"))
+	got := updated.(model)
+
+	if got.mode != modeBrowsing {
+		t.Errorf("mode = %v, want modeBrowsing", got.mode)
+	}
+	if !got.loading {
+		t.Error("loading = false, want true: leaving requests should refetch, showing the loading state")
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want a fetch command")
+	}
+	if _, ok := cmd().(pageLoadedMsg); !ok {
+		t.Error("cmd() did not refetch search \"dune\" as expected")
+	}
+}
+
+func TestUpdate_RequestDetail_DOpensConfirm(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestDetail
+	m.selectedRequest = testRequestItem()
+
+	updated, _ := m.Update(keyMsg("d"))
+	if got := updated.(model); got.mode != modeRequestConfirm {
+		t.Errorf("after \"d\": mode = %v, want modeRequestConfirm", got.mode)
+	}
+
+	updated, _ = m.Update(keyMsg("esc"))
+	if got := updated.(model); got.mode != modeRequests {
+		t.Errorf("after \"esc\": mode = %v, want modeRequests", got.mode)
+	}
+}
+
+// TestUpdate_RequestDetail_EnterDoesNotDelete is the deliberate safety
+// check called out when this feature was designed: unlike modeDetail
+// (where both "r" and "enter" trigger the request), modeRequestDetail only
+// binds "d" to delete — a destructive action shouldn't also fire on a
+// navigation key like enter.
+func TestUpdate_RequestDetail_EnterDoesNotDelete(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestDetail
+	m.selectedRequest = testRequestItem()
+
+	updated, cmd := m.Update(keyMsg("enter"))
+	got := updated.(model)
+
+	if got.mode != modeRequestDetail {
+		t.Errorf("mode = %v, want modeRequestDetail (unchanged)", got.mode)
+	}
+	if cmd != nil {
+		t.Error("cmd != nil, want no-op: \"enter\" must not trigger delete")
+	}
+}
+
+func TestUpdate_RequestConfirm_YSubmitsDelete(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/request/9" {
+			t.Errorf("method/path = %s %s, want DELETE /api/v1/request/9", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	m := newModel(context.Background(), client)
+	m.mode = modeRequestConfirm
+	m.selectedRequest = testRequestItem()
+
+	updated, cmd := m.Update(keyMsg("y"))
+	got := updated.(model)
+
+	if !got.loading {
+		t.Error("loading = false, want true after confirming")
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want the delete command")
+	}
+	result, ok := cmd().(deleteResultMsg)
+	if !ok || result.id != 9 || result.err != nil {
+		t.Errorf("cmd() = %#v, want deleteResultMsg{id: 9, err: nil}", cmd())
+	}
+
+	// Feeding the result back in should land on modeRequestResult.
+	updated, _ = got.Update(result)
+	final := updated.(model)
+	if final.mode != modeRequestResult {
+		t.Errorf("mode = %v, want modeRequestResult", final.mode)
+	}
+	if final.deletedRequestID != 9 {
+		t.Errorf("deletedRequestID = %d, want 9", final.deletedRequestID)
+	}
+}
+
+// TestUpdate_RequestConfirm_DefaultIsNo mirrors TestUpdate_Confirm_DefaultIsNo's
+// [y/N] convention check, for delete instead of request.
+func TestUpdate_RequestConfirm_DefaultIsNo(t *testing.T) {
+	// "enter" is included deliberately: on a [y/N] prompt, a bare enter
+	// should take the shown default (N), not be a no-op.
+	for _, k := range []string{"n", "esc", "enter"} {
+		m := newModel(context.Background(), nil)
+		m.mode = modeRequestConfirm
+		m.selectedRequest = testRequestItem()
+
+		updated, cmd := m.Update(keyMsg(k))
+		got := updated.(model)
+		if got.mode != modeRequestDetail {
+			t.Errorf("key %q: mode = %v, want modeRequestDetail", k, got.mode)
+		}
+		if cmd != nil {
+			t.Errorf("key %q: cmd != nil, want no delete submitted", k)
+		}
+	}
+
+	// A key that's neither y/n/esc doesn't submit either.
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestConfirm
+	m.selectedRequest = testRequestItem()
+	updated, cmd := m.Update(keyMsg("x"))
+	got := updated.(model)
+	if got.mode != modeRequestConfirm {
+		t.Errorf("key \"x\": mode = %v, want modeRequestConfirm (unchanged)", got.mode)
+	}
+	if cmd != nil {
+		t.Error("key \"x\": cmd != nil, want no delete submitted")
+	}
+}
+
+// TestUpdate_RequestResult_AnyKeyReturnsToRequestsAndRefetches is the other
+// deliberate difference from the create-request flow: updateResult doesn't
+// refetch on its way back to browsing (a created request is still valid to
+// browse), but a deleted request must not keep showing in the requests
+// list, so this one does.
+func TestUpdate_RequestResult_AnyKeyReturnsToRequestsAndRefetches(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/request" {
+			t.Errorf("path = %q, want /api/v1/request", r.URL.Path)
+		}
+		w.Write([]byte(`{"pageInfo": {"page": 1, "pages": 1, "results": 0}, "results": []}`))
+	})
+	m := newModel(context.Background(), client)
+	m.mode = modeRequestResult
+	m.deletedRequestID = 9
+
+	updated, cmd := m.Update(keyMsg("x"))
+	got := updated.(model)
+
+	if got.mode != modeRequests {
+		t.Errorf("mode = %v, want modeRequests", got.mode)
+	}
+	if got.deletedRequestID != 0 {
+		t.Errorf("deletedRequestID = %d, want 0 (cleared)", got.deletedRequestID)
+	}
+	if !got.loading {
+		t.Error("loading = false, want true: returning should refetch so the deleted request doesn't keep showing")
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want a fetch command")
+	}
+	if _, ok := cmd().(requestsPageLoadedMsg); !ok {
+		t.Error("cmd() did not refetch requests as expected")
+	}
+}
+
 // Update: global quit
 
 func TestUpdate_QuitFromEveryMode(t *testing.T) {
-	for _, mode := range []mode{modeBrowsing, modeDetail, modeConfirm, modeResult} {
+	for _, mode := range []mode{
+		modeBrowsing, modeDetail, modeConfirm, modeResult,
+		modeRequests, modeRequestDetail, modeRequestConfirm, modeRequestResult,
+	} {
 		for _, k := range []string{"q", "ctrl+c"} {
 			m := newModel(context.Background(), nil)
 			m.mode = mode

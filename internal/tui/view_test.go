@@ -69,6 +69,13 @@ func TestHeaderView_ReflectsMode(t *testing.T) {
 	if got := m.headerView(); !strings.Contains(got, "Search: dune") {
 		t.Errorf("headerView() browsing search results = %q, want it to contain %q", got, "Search: dune")
 	}
+
+	for _, mode := range []mode{modeRequests, modeRequestDetail, modeRequestConfirm, modeRequestResult} {
+		m.mode = mode
+		if got := m.headerView(); !strings.Contains(got, "Requests") {
+			t.Errorf("mode %v: headerView() = %q, want it to contain %q", mode, got, "Requests")
+		}
+	}
 }
 
 func TestView_BrowsingSearchResults(t *testing.T) {
@@ -143,8 +150,11 @@ func TestView_ResultSuccess(t *testing.T) {
 	m.lastRequest = &models.MediaRequest{ID: 9}
 
 	out := m.View()
-	if !strings.Contains(out, "Requested \"Dune\" (request #9)") {
+	if !strings.Contains(out, "Requested \"Dune\".") {
 		t.Errorf("View() missing success message:\n%s", out)
+	}
+	if strings.Contains(out, "#9") {
+		t.Errorf("View() = %q, want no raw request ID shown", out)
 	}
 }
 
@@ -155,6 +165,132 @@ func TestView_ResultError(t *testing.T) {
 
 	out := m.View()
 	if !strings.Contains(out, "Request failed: seerr: forbidden") {
+		t.Errorf("View() missing failure message:\n%s", out)
+	}
+}
+
+func TestView_Requests(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequests
+	m.list.SetSize(80, 20)
+	updated, _ := m.Update(requestsPageLoadedMsg{page: 2, totalPages: 10, items: []requestItem{testRequestItem()}})
+	m = updated.(model)
+
+	out := m.View()
+	for _, want := range []string{"Requests", "2/10", "TMDB 42", "esc: back"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("View() missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestView_Requests_ShowsResolvedTitle checks a request row renders its
+// resolved title instead of the "TMDB <id>" fallback once one's been
+// looked up.
+func TestView_Requests_ShowsResolvedTitle(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequests
+	m.list.SetSize(80, 20)
+	item := testRequestItem()
+	item.title = "Chernobyl"
+	updated, _ := m.Update(requestsPageLoadedMsg{page: 1, totalPages: 1, items: []requestItem{item}})
+	m = updated.(model)
+
+	out := m.View()
+	if !strings.Contains(out, "Chernobyl") {
+		t.Errorf("View() missing resolved title %q:\n%s", "Chernobyl", out)
+	}
+	if strings.Contains(out, "TMDB 42") {
+		t.Errorf("View() = %q, want the fallback \"TMDB 42\" not shown once a title is resolved", out)
+	}
+}
+
+func TestView_RequestDetail(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestDetail
+	m.selectedRequest = requestItem{
+		id: 9, requestStatus: 2, tmdbID: 42,
+		mediaStatus: models.MediaStatusProcessing, createdAt: "2024-01-15T10:30:00.000Z",
+	}
+
+	out := m.View()
+	for _, want := range []string{"TMDB 42", "Approved", "Processing", "2024-01-15", "d: delete"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("View() missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Seasons:") {
+		t.Errorf("View() = %q, want no seasons line (this item has none)", out)
+	}
+}
+
+// TestView_RequestDetail_ShowsSeasonsForTV checks a TV request's per-season
+// line renders, and that a movie request (no Seasons) never shows one.
+func TestView_RequestDetail_ShowsSeasonsForTV(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestDetail
+	m.selectedRequest = requestItem{
+		id: 9, requestStatus: 5, mediaType: models.MediaTV, tmdbID: 87108, title: "Chernobyl",
+		mediaStatus: models.MediaStatusAvailable, createdAt: "2024-01-15T10:30:00.000Z",
+		seasons: []models.RequestSeason{
+			{SeasonNumber: 1, Status: models.MediaStatusAvailable},
+			{SeasonNumber: 2, Status: models.MediaStatusProcessing},
+		},
+	}
+
+	out := m.View()
+	for _, want := range []string{"Seasons:", "S1", "S2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("View() missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestView_RequestConfirm(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestConfirm
+	m.selectedRequest = testRequestItem()
+
+	out := m.View()
+	for _, want := range []string{"Delete this request?", "[y/N]", "y: confirm"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("View() missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "#9") {
+		t.Errorf("View() contains a raw request ID, want the ID dropped:\n%s", out)
+	}
+}
+
+func TestView_RequestResultSuccess(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestResult
+	m.deletedRequestID = 9
+	m.selectedRequest = testRequestItem() // still populated: nothing clears it before rendering
+	m.selectedRequest.title = "Dune"
+
+	out := m.View()
+	// Plain name only, no "(year · Type)" tag — that tag is Title's own
+	// styling (embedded ANSI), which %q would otherwise escape into
+	// literal "\x1b[...m" garbage instead of rendering as color.
+	if !strings.Contains(out, "Deleted \"Dune\".") {
+		t.Errorf("View() missing success message:\n%s", out)
+	}
+	if strings.Contains(out, "\\x1b") {
+		t.Errorf("View() = %q, want no escaped ANSI codes leaking through as literal text", out)
+	}
+	if strings.Contains(out, "#9") {
+		t.Errorf("View() = %q, want no raw request ID shown", out)
+	}
+}
+
+func TestView_RequestResultError(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequestResult
+	m.err = errors.New("seerr: forbidden")
+
+	out := m.View()
+	if !strings.Contains(out, "Delete failed: seerr: forbidden") {
 		t.Errorf("View() missing failure message:\n%s", out)
 	}
 }
@@ -204,6 +340,31 @@ func TestView_FooterAnchoredToBottomInEveryMode(t *testing.T) {
 			m.mode = modeResult
 			m.lastRequest = &models.MediaRequest{ID: 1}
 			m.selected = testItem()
+			return m
+		}},
+		{"requests_shortList", func() model {
+			m := newModel(context.Background(), nil)
+			updated, _ := m.Update(requestsPageLoadedMsg{page: 1, totalPages: 1, items: []requestItem{testRequestItem()}})
+			got := updated.(model)
+			got.mode = modeRequests
+			return got
+		}},
+		{"requestDetail", func() model {
+			m := newModel(context.Background(), nil)
+			m.mode = modeRequestDetail
+			m.selectedRequest = testRequestItem()
+			return m
+		}},
+		{"requestConfirm", func() model {
+			m := newModel(context.Background(), nil)
+			m.mode = modeRequestConfirm
+			m.selectedRequest = testRequestItem()
+			return m
+		}},
+		{"requestResult", func() model {
+			m := newModel(context.Background(), nil)
+			m.mode = modeRequestResult
+			m.deletedRequestID = 9
 			return m
 		}},
 	} {
@@ -264,6 +425,26 @@ func TestFooterHints_QuitAlwaysLast(t *testing.T) {
 			m.mode = modeResult
 			return m
 		}()},
+		{"requests", func() model {
+			m := newModel(context.Background(), nil)
+			m.mode = modeRequests
+			return m
+		}()},
+		{"requestDetail", func() model {
+			m := newModel(context.Background(), nil)
+			m.mode = modeRequestDetail
+			return m
+		}()},
+		{"requestConfirm", func() model {
+			m := newModel(context.Background(), nil)
+			m.mode = modeRequestConfirm
+			return m
+		}()},
+		{"requestResult", func() model {
+			m := newModel(context.Background(), nil)
+			m.mode = modeRequestResult
+			return m
+		}()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			hints := tt.m.footerHints()
@@ -299,10 +480,37 @@ func TestView_PageIndicator_BottomRight(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimRight(footer, " "), "3/12") {
 		t.Errorf("footerView() = %q, want it to end with the right-aligned page indicator", footer)
 	}
-	// The n/p hint must survive alongside the badge, not get truncated away
-	// to make room for it.
+	// The n/p and s hints must survive alongside the badge, not get
+	// truncated away to make room for it.
 	if !strings.Contains(footer, "n/p: page") {
 		t.Errorf("footerView() = %q, want it to still include the \"n/p: page\" hint", footer)
+	}
+	if !strings.Contains(footer, "s: status") {
+		t.Errorf("footerView() = %q, want it to still include the \"s: status\" hint", footer)
+	}
+}
+
+// TestView_PageIndicator_SurvivesDeepPaginationAt80Columns is the specific
+// regression this guards against: adding "s: status" to the browsing
+// footer once pushed its hints wide enough that, at a plain 80-column
+// terminal, the page badge silently vanished off the end (footerView's
+// truncation drops it rather than garbling it — see footerHints' doc
+// comment on the budget this leaves). 275 pages was a real total from a
+// broad search query earlier in this project's use, so "123/275" is a
+// realistic worst case, not a contrived one.
+func TestView_PageIndicator_SurvivesDeepPaginationAt80Columns(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.width, m.height = 80, 20
+	m.list.SetSize(80, 16)
+	updated, _ := m.Update(pageLoadedMsg{page: 123, totalPages: 275, items: []browseItem{testItem()}})
+	m = updated.(model)
+
+	footer := m.footerView()
+	if !strings.Contains(footer, "123/275") {
+		t.Errorf("footerView() = %q, want it to still include the \"123/275\" page badge", footer)
+	}
+	if !strings.Contains(footer, "s: status") {
+		t.Errorf("footerView() = %q, want it to still include the \"s: status\" hint", footer)
 	}
 }
 
@@ -341,11 +549,16 @@ func TestView_PageIndicator_NoFilteredNoteWhenNothingFiltered(t *testing.T) {
 // holds the underlying browse session's value — pagination isn't a real
 // action once a single item is selected.
 func TestView_PageIndicator_HiddenOutsideBrowsing(t *testing.T) {
-	for _, mode := range []mode{modeDetail, modeConfirm, modeResult} {
+	for _, mode := range []mode{
+		modeDetail, modeConfirm, modeResult,
+		modeRequestDetail, modeRequestConfirm, modeRequestResult,
+	} {
 		m := newModel(context.Background(), nil)
 		m.mode = mode
 		m.page, m.totalPages = 3, 12
+		m.requestsPage, m.requestsTotalPages = 3, 12
 		m.selected = testItem()
+		m.selectedRequest = testRequestItem()
 
 		if got := m.pageIndicator(); got != "" {
 			t.Errorf("mode %v: pageIndicator() = %q, want empty", mode, got)
@@ -353,6 +566,21 @@ func TestView_PageIndicator_HiddenOutsideBrowsing(t *testing.T) {
 		if footer := m.footerView(); strings.Contains(footer, "3/12") {
 			t.Errorf("mode %v: footerView() = %q, should not include the page badge", mode, footer)
 		}
+	}
+}
+
+// TestView_PageIndicator_RequestsUsesRequestsPageState checks pageIndicator
+// reads requestsPage/requestsTotalPages while in modeRequests, not the
+// stale page/totalPages left over from whatever Discover/Search browsing
+// was active before "s" was pressed.
+func TestView_PageIndicator_RequestsUsesRequestsPageState(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeRequests
+	m.page, m.totalPages = 99, 99
+	m.requestsPage, m.requestsTotalPages = 3, 40
+
+	if got := m.pageIndicator(); got != "3/40" {
+		t.Errorf("pageIndicator() = %q, want %q", got, "3/40")
 	}
 }
 
@@ -382,3 +610,36 @@ func leadingSpaces(s string) int {
 }
 
 func statusPtr(s models.MediaStatus) *models.MediaStatus { return &s }
+
+func TestSeasonsLine_Empty(t *testing.T) {
+	if got := seasonsLine(nil); got != "" {
+		t.Errorf("seasonsLine(nil) = %q, want empty", got)
+	}
+}
+
+// TestSeasonsLine_SortsAndOrdersBySeasonNumber checks output is sorted by
+// season number regardless of input order (Seerr doesn't guarantee one).
+func TestSeasonsLine_SortsAndOrdersBySeasonNumber(t *testing.T) {
+	got := seasonsLine([]models.RequestSeason{
+		{SeasonNumber: 3, Status: models.MediaStatusAvailable},
+		{SeasonNumber: 1, Status: models.MediaStatusAvailable},
+		{SeasonNumber: 2, Status: models.MediaStatusProcessing},
+	})
+	s1, s2, s3 := strings.Index(got, "S1"), strings.Index(got, "S2"), strings.Index(got, "S3")
+	if s1 < 0 || s2 < 0 || s3 < 0 {
+		t.Fatalf("seasonsLine() = %q, want S1/S2/S3 all present", got)
+	}
+	if !(s1 < s2 && s2 < s3) {
+		t.Errorf("seasonsLine() = %q, want S1 before S2 before S3", got)
+	}
+}
+
+// TestSeasonsLine_UnknownStatusGetsFallbackGlyph checks a season status
+// with no glyph of its own (statusGlyph's default case) still gets a
+// marker, rather than leaving a bare "S<n>" with nothing after it.
+func TestSeasonsLine_UnknownStatusGetsFallbackGlyph(t *testing.T) {
+	got := seasonsLine([]models.RequestSeason{{SeasonNumber: 1, Status: models.MediaStatusUnknown}})
+	if !strings.Contains(got, "S1") || !strings.Contains(got, "•") {
+		t.Errorf("seasonsLine() = %q, want \"S1\" and a fallback \"•\" glyph", got)
+	}
+}

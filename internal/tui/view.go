@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -34,7 +35,7 @@ var (
 	errorStyle   = lipgloss.NewStyle().Foreground(colorDeclined).Padding(0, 1)
 	successStyle = lipgloss.NewStyle().Foreground(colorAvailable).Padding(0, 1)
 	boxStyle     = lipgloss.NewStyle().Padding(1, 2)
-	promptStyle  = lipgloss.NewStyle().Bold(true).Padding(1, 1)
+	promptStyle  = lipgloss.NewStyle().Bold(true).Padding(1, 2) // same horizontal padding as boxStyle, so the confirm prompt lines up under the box above it
 	titleStyle   = lipgloss.NewStyle().Bold(true)
 	mutedStyle   = lipgloss.NewStyle().Foreground(colorMuted)
 )
@@ -117,8 +118,11 @@ func (m model) View() string {
 }
 
 func (m model) headerView() string {
-	if m.mode == modeSearch {
+	switch m.mode {
+	case modeSearch:
 		return m.sizedLine(headerStyle).Render("reel — Search")
+	case modeRequests, modeRequestDetail, modeRequestConfirm, modeRequestResult:
+		return m.sizedLine(headerStyle).Render("reel — Requests")
 	}
 	if m.source == sourceSearch {
 		return m.sizedLine(headerStyle).Render("reel — Search: " + m.query)
@@ -135,7 +139,7 @@ func (m model) bodyView() string {
 	if m.loading {
 		return fmt.Sprintf(" %s Loading…", m.spinner.View())
 	}
-	if m.err != nil && m.mode != modeResult {
+	if m.err != nil && m.mode != modeResult && m.mode != modeRequestResult {
 		return m.sized(errorStyle).Render("Error: " + m.err.Error())
 	}
 
@@ -146,6 +150,10 @@ func (m model) bodyView() string {
 		return m.detailView()
 	case modeResult:
 		return m.resultView()
+	case modeRequestDetail, modeRequestConfirm:
+		return m.requestDetailView()
+	case modeRequestResult:
+		return m.requestResultView()
 	default:
 		return listStyle.Render(m.list.View())
 	}
@@ -171,11 +179,7 @@ func (m model) detailView() string {
 		fmt.Fprintf(&b, "  %s", statusBadge(*it.status))
 	}
 	b.WriteString("\n")
-	dividerWidth := m.termWidth() - boxStyle.GetHorizontalFrameSize()
-	if dividerWidth < 1 {
-		dividerWidth = 1
-	}
-	b.WriteString(mutedStyle.Render(strings.Repeat("─", dividerWidth)))
+	b.WriteString(m.detailDivider())
 	b.WriteString("\n")
 	if it.overview != "" {
 		b.WriteString(it.overview)
@@ -186,9 +190,80 @@ func (m model) detailView() string {
 	box := m.sized(boxStyle).Render(b.String())
 	if m.mode == modeConfirm {
 		prompt := m.sized(promptStyle).Render(fmt.Sprintf("Request %q? [y/N]", it.title))
-		return lipgloss.JoinVertical(lipgloss.Left, box, prompt)
+		return lipgloss.JoinVertical(lipgloss.Left, box, m.standaloneDivider(), prompt)
 	}
 	return box
+}
+
+// detailDivider is a muted horizontal rule sized to detailView/
+// requestDetailView's shared box width, separating their title/metadata
+// block from the body text below it. It's meant for use as content inside
+// the box, where boxStyle's own padding provides the left/right inset.
+func (m model) detailDivider() string {
+	dividerWidth := m.termWidth() - boxStyle.GetHorizontalFrameSize()
+	if dividerWidth < 1 {
+		dividerWidth = 1
+	}
+	return mutedStyle.Render(strings.Repeat("─", dividerWidth))
+}
+
+// standaloneDivider is detailDivider's counterpart for use between the box
+// and the confirm prompt — outside the box, so (unlike detailDivider) it
+// needs its own left inset to line up with the box/prompt's, rather than
+// inheriting one from a wrapping style.
+func (m model) standaloneDivider() string {
+	return "  " + m.detailDivider()
+}
+
+// requestDetailView mirrors detailView's shape (title, status line,
+// divider, body text) for a requestItem instead of a browseItem: request
+// status and media availability status both get a badge on the title line
+// itself, a TV request's per-season availability gets its own line below
+// that (see seasonsLine — movie requests never have one), and the body is
+// the full request timestamp rather than an overview (requests don't have
+// one).
+func (m model) requestDetailView() string {
+	it := m.selectedRequest
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(it.Title()))
+	b.WriteString(" ")
+	b.WriteString(requestStatusBadge(it.requestStatus))
+	b.WriteString("  ")
+	b.WriteString(statusBadge(it.mediaStatus))
+	b.WriteString("\n")
+	if seasons := seasonsLine(it.seasons); seasons != "" {
+		b.WriteString(seasons)
+		b.WriteString("\n")
+	}
+	b.WriteString(m.detailDivider())
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "Requested: %s", it.createdAt)
+
+	box := m.sized(boxStyle).Render(b.String())
+	if m.mode == modeRequestConfirm {
+		// No ID here, matching the CLI's own delete confirmation wording
+		// exactly ("Delete this request? [y/N]") — a bare request ID isn't
+		// meaningful to look at, especially once titles are showing.
+		prompt := m.sized(promptStyle).Render("Delete this request? [y/N]")
+		return lipgloss.JoinVertical(lipgloss.Left, box, m.standaloneDivider(), prompt)
+	}
+	return box
+}
+
+// requestResultView mirrors resultView for a delete instead of a create.
+func (m model) requestResultView() string {
+	if m.err != nil {
+		return m.sized(errorStyle).Render("Delete failed: " + m.err.Error())
+	}
+	if m.deletedRequestID != 0 {
+		// The name, not the raw ID — same reasoning as dropping it from
+		// the delete confirmation prompt. m.selectedRequest is still the
+		// item that was just deleted; nothing clears it before this.
+		// name() (plain), not Title() — Title's embedded ANSI color codes
+		// would come out as literal "\x1b[...m" text once %q escapes them.
+		return m.sized(successStyle).Render(fmt.Sprintf("Deleted %q.", m.selectedRequest.name()))
+	}
+	return ""
 }
 
 func (m model) resultView() string {
@@ -196,7 +271,7 @@ func (m model) resultView() string {
 		return m.sized(errorStyle).Render("Request failed: " + m.err.Error())
 	}
 	if m.lastRequest != nil {
-		return m.sized(successStyle).Render(fmt.Sprintf("Requested %q (request #%d).", m.selected.title, m.lastRequest.ID))
+		return m.sized(successStyle).Render(fmt.Sprintf("Requested %q.", m.selected.title))
 	}
 	return ""
 }
@@ -226,34 +301,45 @@ func (m model) footerView() string {
 }
 
 // footerHints uses a plain double space between entries rather than a " · "
-// bullet — freeing enough width for "n/p: page" to sit alongside the page
-// badge at a normal 80-column width without truncating.
+// bullet — freeing enough width for the hints to sit alongside the page
+// badge at a normal 80-column width without truncating. The default
+// (browsing) case drops "enter: view" for the same budget reason: opening
+// the selected item on enter is the single most standard list convention
+// here, so it's the one hint that can go unstated to make room for less
+// guessable bindings like "s: status" — a page badge as deep as "123/275"
+// still comfortably fits alongside what's left.
 func (m model) footerHints() string {
 	switch m.mode {
 	case modeSearch:
 		return "enter: search  esc: cancel"
 	case modeDetail:
 		return "r/enter: request  esc: back  q: quit"
-	case modeConfirm:
+	case modeConfirm, modeRequestConfirm:
 		return "y: confirm  n/esc: cancel  q: quit"
-	case modeResult:
+	case modeResult, modeRequestResult:
 		return "any key: continue  q: quit"
+	case modeRequests:
+		return "↑/↓: nav  enter: view  n/p: page  esc: back  q: quit"
+	case modeRequestDetail:
+		return "d: delete  esc: back  q: quit"
 	default:
-		hints := "↑/↓: nav  enter: view  n/p: page"
+		hints := "↑/↓: nav  n/p: page"
 		if m.source == sourceSearch {
 			hints += "  /: search  esc: clear"
 		} else {
 			hints += "  tab: movie/tv  /: search"
 		}
+		hints += "  s: status"
 		return hints + "  q: quit"
 	}
 }
 
-// pageIndicator is "X/Y" while browsing (Discover or search results) has a
-// paginated fetch loaded — not in modeDetail/modeConfirm/modeResult, where a
-// single selected item isn't paginated even though m.totalPages still holds
-// the underlying list's last known value. Kept terse (no "page" word) to
-// leave the footer's width budget for the hints.
+// pageIndicator is "X/Y" while browsing (Discover, search results, or
+// requests) has a paginated fetch loaded — not in modeDetail/modeConfirm/
+// modeResult or their request counterparts, where a single selected item
+// isn't paginated even though totalPages still holds the underlying list's
+// last known value. Kept terse (no "page" word) to leave the footer's width
+// budget for the hints.
 //
 // Search results append a "shown (filtered)" note whenever this page came
 // back thinner than usual: Seerr paginates the raw, unfiltered result set
@@ -262,6 +348,12 @@ func (m model) footerHints() string {
 // filtered out — this makes clear that's filtering, not a bug, rather than
 // just leaving the list looking sparse.
 func (m model) pageIndicator() string {
+	if m.mode == modeRequests {
+		if m.requestsTotalPages <= 0 {
+			return ""
+		}
+		return fmt.Sprintf("%d/%d", m.requestsPage, m.requestsTotalPages)
+	}
 	if m.mode != modeBrowsing || m.totalPages <= 0 {
 		return ""
 	}
@@ -339,4 +431,99 @@ func statusBadge(status models.MediaStatus) string {
 		text = glyph + " " + text
 	}
 	return lipgloss.NewStyle().Foreground(statusColor(status)).Render(text)
+}
+
+// requestStatusLabel mirrors internal/cli/status.go's requestStatusLabel.
+// Kept local rather than shared, same reasoning as mediaStatusLabel.
+func requestStatusLabel(status int) string {
+	switch status {
+	case 1:
+		return "Pending"
+	case 2:
+		return "Approved"
+	case 3:
+		return "Declined"
+	case 4:
+		return "Failed"
+	case 5:
+		return "Completed"
+	default:
+		return "Unknown"
+	}
+}
+
+// requestStatusColor and requestStatusGlyph map models.MediaRequest.Status
+// onto the same four buckets/colors/glyphs as statusColor/statusGlyph
+// (pending/requested, processing/downloading, available, declined/failed),
+// since a request's lifecycle is a different enum but the same underlying
+// semantics: Pending is still awaiting action (pending bucket); Approved is
+// accepted and moving toward fulfillment (processing bucket); Declined and
+// Failed both mean Seerr won't fulfil it (declined bucket); Completed means
+// it's done (available bucket).
+func requestStatusColor(status int) lipgloss.Color {
+	switch status {
+	case 1: // Pending
+		return colorPending
+	case 2: // Approved
+		return colorProcessing
+	case 3, 4: // Declined, Failed
+		return colorDeclined
+	case 5: // Completed
+		return colorAvailable
+	default:
+		return colorMuted
+	}
+}
+
+func requestStatusGlyph(status int) string {
+	switch status {
+	case 1: // Pending
+		return "🎬"
+	case 2: // Approved
+		return "↓"
+	case 3, 4: // Declined, Failed
+		return "✗"
+	case 5: // Completed
+		return "✓"
+	default:
+		return ""
+	}
+}
+
+// requestStatusBadge is statusBadge's counterpart for a request's own
+// status (as opposed to its media's library-availability status).
+func requestStatusBadge(status int) string {
+	text := requestStatusLabel(status)
+	if glyph := requestStatusGlyph(status); glyph != "" {
+		text = glyph + " " + text
+	}
+	return lipgloss.NewStyle().Foreground(requestStatusColor(status)).Render(text)
+}
+
+// seasonsLine summarizes a TV request's per-season availability as a
+// single compact row, e.g. "Seasons: S1 ✓  S2 ✓  S3 ↓" — reusing the same
+// status colors/glyphs as media availability generally (statusColor/
+// statusGlyph, keyed on the same models.MediaStatus enum Seerr uses for a
+// season's own status). A status with no glyph of its own (Unknown/
+// Deleted) still gets a muted bullet, so every season shows some marker
+// rather than an unexplained gap. Movie requests, or a TV request Seerr
+// hasn't attached season data to, return "".
+func seasonsLine(seasons []models.RequestSeason) string {
+	if len(seasons) == 0 {
+		return ""
+	}
+	sorted := append([]models.RequestSeason(nil), seasons...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].SeasonNumber < sorted[j].SeasonNumber })
+
+	parts := make([]string, len(sorted))
+	for i, s := range sorted {
+		glyph := statusGlyph(s.Status)
+		if glyph == "" {
+			glyph = "•"
+		}
+		label := mutedStyle.Render(fmt.Sprintf("S%d", s.SeasonNumber))
+		coloredGlyph := lipgloss.NewStyle().Foreground(statusColor(s.Status)).Render(glyph)
+		parts[i] = label + " " + coloredGlyph
+	}
+	return "Seasons: " + strings.Join(parts, "  ")
 }

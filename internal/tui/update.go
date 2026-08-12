@@ -99,6 +99,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeResult
 		return m, nil
 
+	case requestsPageLoadedMsg:
+		if msg.seq != m.loadSeq {
+			return m, nil
+		}
+		m.loading = false
+		m.err = nil
+		m.requestsPage, m.requestsTotalPages = msg.page, msg.totalPages
+		items := make([]list.Item, len(msg.items))
+		for i, it := range msg.items {
+			items[i] = it
+		}
+		m.list.SetItems(items)
+		m.list.Select(0)
+		return m, nil
+
+	case deleteResultMsg:
+		m.loading = false
+		m.err = msg.err
+		if msg.err == nil {
+			m.deletedRequestID = msg.id
+		}
+		m.mode = modeRequestResult
+		return m, nil
+
 	case spinner.TickMsg:
 		if !m.loading {
 			return m, nil
@@ -119,6 +143,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateConfirm(msg)
 	case modeResult:
 		return m.updateResult(msg)
+	case modeRequests:
+		return m.updateRequests(msg)
+	case modeRequestDetail:
+		return m.updateRequestDetail(msg)
+	case modeRequestConfirm:
+		return m.updateRequestConfirm(msg)
+	case modeRequestResult:
+		return m.updateRequestResult(msg)
 	default:
 		return m, nil
 	}
@@ -170,6 +202,11 @@ func (m model) updateBrowsing(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.searchInput.Focus()
 		m.mode = modeSearch
 		return m, cmd
+
+	case "s":
+		m.mode = modeRequests
+		m.requestsPage = 1
+		return m.startRequestsFetch()
 
 	case "esc":
 		// Clear an active search back to plain Discover browsing. No-op
@@ -240,6 +277,15 @@ func (m model) startFetch() (tea.Model, tea.Cmd) {
 	return m, fetchPageCmd(m.ctx, m.client, m.source, m.mediaType, m.query, m.page, m.loadSeq)
 }
 
+// startRequestsFetch is startFetch's counterpart for modeRequests: bumps
+// loadSeq and kicks off a fetch for the model's current requestsPage.
+func (m model) startRequestsFetch() (tea.Model, tea.Cmd) {
+	m.loadSeq++
+	m.loading = true
+	m.err = nil
+	return m, fetchRequestsCmd(m.ctx, m.client, m.titles, m.requestsPage, m.loadSeq)
+}
+
 func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -264,7 +310,9 @@ func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.err = nil
 		return m, submitRequestCmd(m.ctx, m.client, m.selected)
-	case "n", "esc":
+	// "enter" cancels along with "n"/"esc": a bare enter on a [y/N] prompt
+	// should take the shown default (N), not be a no-op.
+	case "n", "esc", "enter":
 		m.mode = modeDetail
 	}
 	return m, nil
@@ -277,6 +325,100 @@ func (m model) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeBrowsing
 		m.err = nil
 		m.lastRequest = nil
+	}
+	return m, nil
+}
+
+// updateRequests intercepts n/p (Seerr-side pagination), enter (open
+// request detail) and esc/b (back to browsing, refetching it since m.list
+// was just overwritten with requests); everything else is forwarded to the
+// list untouched, mirroring updateBrowsing.
+func (m model) updateRequests(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	}
+
+	switch keyMsg.String() {
+	case "n":
+		if m.loading || (m.requestsTotalPages > 0 && m.requestsPage >= m.requestsTotalPages) {
+			return m, nil
+		}
+		m.requestsPage++
+		return m.startRequestsFetch()
+
+	case "p":
+		if m.loading || m.requestsPage <= 1 {
+			return m, nil
+		}
+		m.requestsPage--
+		return m.startRequestsFetch()
+
+	case "enter":
+		if item, ok := m.list.SelectedItem().(requestItem); ok {
+			m.selectedRequest = item
+			m.mode = modeRequestDetail
+		}
+		return m, nil
+
+	case "esc", "b":
+		m.mode = modeBrowsing
+		return m.startFetch()
+	}
+
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+// updateRequestDetail mirrors updateDetail, but "d" (not "enter" — a
+// destructive action shouldn't share a trigger with a navigation key) opens
+// the delete confirmation instead of a request-creation one.
+func (m model) updateRequestDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "d":
+		m.mode = modeRequestConfirm
+	case "esc", "b":
+		m.mode = modeRequests
+	}
+	return m, nil
+}
+
+// updateRequestConfirm mirrors updateConfirm exactly, deleting instead of
+// requesting.
+func (m model) updateRequestConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "y":
+		m.loading = true
+		m.err = nil
+		return m, deleteRequestCmd(m.ctx, m.client, m.selectedRequest.id)
+	// "enter" cancels along with "n"/"esc": a bare enter on a [y/N] prompt
+	// should take the shown default (N), not be a no-op.
+	case "n", "esc", "enter":
+		m.mode = modeRequestDetail
+	}
+	return m, nil
+}
+
+// updateRequestResult returns to the requests list on any key, same as
+// updateResult — except it refetches on the way back, since staying on the
+// stale list would keep showing the request that was just deleted.
+func (m model) updateRequestResult(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.KeyMsg); ok {
+		m.err = nil
+		m.deletedRequestID = 0
+		m.mode = modeRequests
+		return m.startRequestsFetch()
 	}
 	return m, nil
 }

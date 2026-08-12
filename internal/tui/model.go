@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -21,6 +23,16 @@ const (
 	modeDetail
 	modeConfirm
 	modeResult
+	// modeRequests/modeRequestDetail/modeRequestConfirm/modeRequestResult
+	// mirror modeBrowsing/modeDetail/modeConfirm/modeResult's shape for
+	// existing requests (list -> detail -> delete confirm -> result), kept
+	// as their own mode values rather than folded into the browse ones
+	// since the underlying item (requestItem, not browseItem) and the
+	// available action (delete, not request) both genuinely differ.
+	modeRequests
+	modeRequestDetail
+	modeRequestConfirm
+	modeRequestResult
 )
 
 // source is what the current list's items came from, and therefore what
@@ -181,6 +193,120 @@ func promoteDominant(items []browseItem) {
 	}
 }
 
+// requestItem flattens a models.MediaRequest to what the requests list and
+// detail views need. It satisfies list.DefaultItem (FilterValue/Title/
+// Description).
+type requestItem struct {
+	id            int
+	requestStatus int // models.MediaRequest.Status: 1 Pending, 2 Approved, 3 Declined, 4 Failed, 5 Completed
+	mediaType     models.MediaType
+	tmdbID        int
+	mediaStatus   models.MediaStatus // media.status: library availability, not the request's own status
+	seasons       []models.RequestSeason
+	createdAt     string
+	// title/year are resolved separately from GET /request (which doesn't
+	// join either in) via a per-item MediaSummary lookup — see
+	// resolveTitles. Both empty until resolved, or if the lookup failed
+	// for this item.
+	title string
+	year  string
+}
+
+func (i requestItem) FilterValue() string { return fmt.Sprintf("%d", i.tmdbID) }
+
+// name resolves the item's plain display name — the title if resolved, or
+// the TMDB-ID fallback otherwise — with no styling applied. Use this (not
+// Title) anywhere the result needs to stay plain text, e.g. embedded in a
+// fmt "%q"-quoted message: %q escapes control characters, so a string
+// containing Title's embedded ANSI color codes comes out as literal
+// "\x1b[...m" garbage instead of being rendered as color.
+func (i requestItem) name() string {
+	if i.title != "" {
+		return i.title
+	}
+	return fmt.Sprintf("TMDB %d", i.tmdbID)
+}
+
+// Title is name suffixed with a muted "(<year> · Movie/TV)" tag (year
+// omitted if unresolved) — the tag is colored last in the string
+// deliberately: a nested Render's own trailing reset only clears the outer
+// style's color for whatever comes after it, so this is safe exactly
+// because nothing does.
+func (i requestItem) Title() string {
+	meta := typeLabel(i.mediaType)
+	if i.year != "" {
+		meta = i.year + " · " + meta
+	}
+	return i.name() + " " + mutedStyle.Render("("+meta+")")
+}
+
+// Description puts the request-status badge first and the muted "requested
+// <date>" text after it, both self-colored via their own Render calls
+// rather than leaning on the delegate's NormalDesc/SelectedDesc wrap for the
+// date's color: a nested Render's own trailing reset would clear that outer
+// style's color for everything rendered after it. (browseItem.Description's
+// status glyph avoids this the other way, by being the last thing in the
+// string instead.)
+func (i requestItem) Description() string {
+	return requestStatusBadge(i.requestStatus) + "  " + mutedStyle.Render("requested "+dateOnly(i.createdAt))
+}
+
+func requestItemOf(r models.MediaRequest) requestItem {
+	return requestItem{
+		id:            r.ID,
+		requestStatus: r.Status,
+		mediaType:     r.Type,
+		tmdbID:        r.Media.TmdbID,
+		mediaStatus:   r.Media.Status,
+		seasons:       r.Seasons,
+		createdAt:     r.CreatedAt,
+	}
+}
+
+// dateOnly trims an ISO8601 timestamp down to its date, mirroring year's
+// truncation of a release date — a request list row has no room for a full
+// timestamp, and to-the-day precision is all that's useful there.
+func dateOnly(s string) string {
+	if len(s) < 10 {
+		return s
+	}
+	return s[:10]
+}
+
+// titleCache is an in-session, concurrency-safe TMDB-ID -> title/year cache:
+// a request page visited a second time (paging back and forth, or after a
+// delete shifted later pages up) resolves already-seen titles from here
+// instead of refetching them. Held as a pointer on model so the same cache
+// survives Bubble Tea's per-Update value copies of model rather than being
+// recreated (and emptied) on every message. Purely in-memory — nothing
+// here is written to disk, and it's gone when the process exits.
+//
+// The mutex is needed because fetchRequestsCmd resolves cache misses with
+// concurrent goroutines (see resolveTitles): without it, two of that
+// fetch's own goroutines writing to the same map at once — or two
+// overlapping fetches, from paging quickly — would race.
+type titleCache struct {
+	mu sync.Mutex
+	m  map[int]api.MediaSummary
+}
+
+func newTitleCache() *titleCache {
+	return &titleCache{m: make(map[int]api.MediaSummary)}
+}
+
+func (c *titleCache) get(tmdbID int) (api.MediaSummary, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s, ok := c.m[tmdbID]
+	return s, ok
+}
+
+func (c *titleCache) set(tmdbID int, s api.MediaSummary) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[tmdbID] = s
+}
+
 // model is the root bubbletea model driving reel's TUI.
 type model struct {
 	ctx    context.Context
@@ -205,6 +331,21 @@ type model struct {
 
 	selected    browseItem
 	lastRequest *models.MediaRequest
+
+	// requestsPage/requestsTotalPages are modeRequests' own paging state,
+	// kept separate from page/totalPages (Discover/Search's) so leaving
+	// requests and coming back to browsing doesn't lose your place there —
+	// same reasoning as source/query already being independent of it.
+	requestsPage, requestsTotalPages int
+	selectedRequest                  requestItem
+	// deletedRequestID is the ID shown by modeRequestResult on a successful
+	// delete; 0 (Seerr IDs start at 1) means nothing to show. Mirrors
+	// lastRequest's role in the create-request result, but as a bare ID
+	// since DeleteRequest's response carries nothing else to show.
+	deletedRequestID int
+	// titles resolves requestItem titles across the life of the program —
+	// see titleCache's doc comment.
+	titles *titleCache
 
 	loading bool
 	err     error
@@ -262,6 +403,7 @@ func newModel(ctx context.Context, client *api.Client) model {
 		list:        l,
 		page:        1,
 		spinner:     sp,
+		titles:      newTitleCache(),
 	}
 }
 
@@ -291,6 +433,18 @@ type errMsg struct {
 
 type requestResultMsg struct {
 	req *models.MediaRequest
+	err error
+}
+
+type requestsPageLoadedMsg struct {
+	seq        int
+	items      []requestItem
+	page       int
+	totalPages int
+}
+
+type deleteResultMsg struct {
+	id  int
 	err error
 }
 
@@ -344,5 +498,77 @@ func submitRequestCmd(ctx context.Context, client *api.Client, item browseItem) 
 		}
 		req, err := client.CreateRequest(ctx, input)
 		return requestResultMsg{req: req, err: err}
+	}
+}
+
+// requestsPageSize is passed as ListRequestsOptions.Take. internal/cli's
+// status command leaves Take unset and takes whatever Seerr defaults to;
+// the TUI needs a known, consistent page size for n/p paging to mean
+// anything, so it asks explicitly — matching Discover/Search's typical
+// page density.
+const requestsPageSize = 20
+
+// fetchRequestsCmd fetches one page of existing requests, via the same
+// ListRequests call internal/cli's status command uses.
+func fetchRequestsCmd(ctx context.Context, client *api.Client, cache *titleCache, page, seq int) tea.Cmd {
+	return func() tea.Msg {
+		if page < 1 {
+			page = 1
+		}
+		opts := api.ListRequestsOptions{Take: requestsPageSize, Skip: (page - 1) * requestsPageSize}
+		reqList, err := client.ListRequests(ctx, opts)
+		if err != nil {
+			return errMsg{seq: seq, err: err}
+		}
+		items := make([]requestItem, len(reqList.Results))
+		for i, r := range reqList.Results {
+			items[i] = requestItemOf(r)
+		}
+		resolveTitles(ctx, client, cache, items)
+		totalPages := reqList.PageInfo.Pages
+		if totalPages < 1 {
+			totalPages = 1
+		}
+		return requestsPageLoadedMsg{seq: seq, items: items, page: page, totalPages: totalPages}
+	}
+}
+
+// resolveTitles fills in items' title/year in place: a cache hit is used
+// directly (no request), a miss is looked up via MediaSummary and cached
+// for next time. Misses are resolved concurrently — up to requestsPageSize
+// (20) at once, small and bounded enough that a worker pool would be
+// overhead for no benefit — since each is an independent HTTP call to a
+// different TMDB ID with no shared state beyond the cache, which is
+// already safe for concurrent access. A failed lookup (e.g. a since-
+// deleted TMDB entry) leaves that item's title/year empty rather than
+// failing the whole page; requestItem.Title falls back to the TMDB ID (and
+// omits the year) for it.
+func resolveTitles(ctx context.Context, client *api.Client, cache *titleCache, items []requestItem) {
+	var wg sync.WaitGroup
+	for i := range items {
+		if s, ok := cache.get(items[i].tmdbID); ok {
+			items[i].title, items[i].year = s.Title, s.Year
+			continue
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			s, err := client.MediaSummary(ctx, items[i].mediaType, items[i].tmdbID)
+			if err != nil || s.Title == "" {
+				return
+			}
+			items[i].title, items[i].year = s.Title, s.Year
+			cache.set(items[i].tmdbID, s)
+		}(i)
+	}
+	wg.Wait()
+}
+
+// deleteRequestCmd deletes a request, via the same DeleteRequest call
+// internal/cli's delete command uses.
+func deleteRequestCmd(ctx context.Context, client *api.Client, id int) tea.Cmd {
+	return func() tea.Msg {
+		err := client.DeleteRequest(ctx, id)
+		return deleteResultMsg{id: id, err: err}
 	}
 }
