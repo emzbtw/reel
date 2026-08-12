@@ -77,7 +77,7 @@ The application communicates with the Seerr API to:
 
 ---
 
-# Planned Components
+# Components
 
 ## CLI
 
