@@ -22,6 +22,15 @@
 
       vendorHash = "sha256-ErR7blnZT7sBMv/HUKwj5Ow5O7EDUjcl6QDEJ2OUGCQ=";
 
+      nativeBuildInputs = [pkgs.installShellFiles];
+
+      postInstall = ''
+        installShellCompletion --cmd reel \
+          --bash <($out/bin/reel completion bash) \
+          --fish <($out/bin/reel completion fish) \
+          --zsh <($out/bin/reel completion zsh)
+      '';
+
       meta = {
         description = "Terminal-first CLI/TUI companion for Seerr";
         homepage = "https://github.com/emzbtw/reel";
