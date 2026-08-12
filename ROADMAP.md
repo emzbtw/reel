@@ -68,12 +68,6 @@ Landed:
 * [x] Search results reordering — promotes a landslide-more-popular match above weak partial matches Seerr's own relevance ranking buried it behind, without a blanket popularity sort that would risk burying a precise/exact match
 * [x] Palette and layout pass — status colors/glyphs matching Seerr's own semantics (pending/processing/available/declined), consistent header/selection/muted-text treatment across every screen
 
-## v0.5
-
-* Download progress
-* Jellyfin integration
-* Notifications
-
 ## v1.0
 
 A polished terminal-first media companion that unifies discovery, requesting, tracking, and personal media organization into a single, extensible tool.

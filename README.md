@@ -235,12 +235,6 @@ Rebuild the `./reel` binary after pulling changes (`make build`) — a stale bin
 
 * Interactive TUI
 
-## v0.5
-
-* Download progress
-* Jellyfin integration
-* Notifications
-
 ## v1.0
 
 A polished terminal-first media companion that unifies discovery, requesting, tracking, and personal media organization into a single, extensible tool.
