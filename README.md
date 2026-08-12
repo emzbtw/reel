@@ -1,10 +1,10 @@
-# Project Vision (Draft)
+# Project Vision
 
 ## Overview
 
-This project is a terminal-first companion for modern self-hosted media servers.
+This project is a terminal-first companion for Seerr, the self-hosted media request and discovery service that fronts Radarr, Sonarr, and Jellyfin.
 
-Rather than replacing Seerr, Radarr, Sonarr, or Jellyfin, it provides a unified interface for interacting with them from the command line, a TUI, and personal workflows such as Obsidian.
+Rather than replacing Seerr's own web UI, it provides a command line, a TUI, and Obsidian integration for the same discovery and requesting workflow.
 
 The long-term goal is to create a tool that feels as natural to use as `lazygit`, `btop`, or `git`—fast, keyboard-driven, scriptable, and enjoyable to use.
 
@@ -15,7 +15,6 @@ The long-term goal is to create a tool that feels as natural to use as `lazygit`
 * Provide a first-class CLI for media discovery and requests.
 * Build a rich TUI for browsing and managing media.
 * Integrate with Obsidian to turn notes into actionable media lists.
-* Remain backend-agnostic where possible.
 * Be easy to package and run on NixOS.
 * Expose functionality through both human-friendly commands and automation-friendly interfaces.
 
@@ -31,15 +30,11 @@ The CLI should be useful on its own.
 
 The TUI should enhance the CLI rather than replace it.
 
-Every feature available in the TUI should be built on reusable library code.
-
 ---
 
-# Initial Backend
+# Backend
 
-The first backend will be Seerr.
-
-Initially the application will communicate with the Seerr API to:
+The application communicates with the Seerr API to:
 
 * Search movies
 * Search TV shows
@@ -48,23 +43,13 @@ Initially the application will communicate with the Seerr API to:
 * Check media availability
 * Display trending and popular content
 
-Future versions may support additional services without changing the user experience.
-
-Potential future backends include:
-
-* Jellyfin
-* Plex
-* Trakt
-* Radarr
-* Sonarr
-
 ---
 
 # Planned Components
 
 ## CLI
 
-The CLI will provide quick access to common operations.
+The CLI provides quick access to common operations.
 
 Examples:
 
@@ -76,28 +61,27 @@ reel trending
 reel sync
 ```
 
-The CLI should produce clean, readable output that works well in terminals and scripts.
+The CLI produces clean, readable output that works well in terminals and scripts.
 
 ---
 
 ## TUI
 
-The TUI will provide an interactive experience inspired by modern terminal applications.
+The TUI provides an interactive experience inspired by modern terminal applications.
 
-Possible features:
+Features:
 
-* Search as you type
-* Browse trending media
-* View artwork and metadata
+* Browse Discover movies and TV shows, with pagination
+* Search Seerr, with results replacing the browse list
 * Keyboard-driven navigation
-* Request media
-* View request history
+* Request media, with a confirmation step
+* View and cancel existing requests
 
 ---
 
 ## Obsidian Integration
 
-Obsidian will become more than a note-taking application.
+Obsidian becomes more than a note-taking application.
 
 Example workflow:
 
@@ -125,7 +109,10 @@ Example result:
 - [✓] Arrival
 - [↓] Heat
 - [🎬] Alien
+- [✗] Some Declined Movie
 ```
+
+A line can also be marked `[x]`/`[X]` to pause reel from writing to it without losing tracking, or given a trailing `%%reel:ignore%%` comment to opt it out permanently.
 
 The vault becomes a living media dashboard instead of a static wishlist.
 
@@ -185,7 +172,9 @@ reel/
 │   ├── api/
 │   ├── cli/
 │   ├── config/
-│   └── models/
+│   ├── models/
+│   ├── obsidian/
+│   └── tui/
 ├── flake.lock
 ├── flake.nix
 ├── go.mod
