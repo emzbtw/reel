@@ -55,9 +55,18 @@ Fixes since:
   only mapped PENDING/APPROVED/DECLINED, missing FAILED (4) and COMPLETED (5); and
   `MediaStatus` was missing BLOCKLISTED (6), which had shifted DELETED to 7
 
-## v0.4
+## v0.4 — Done
+
+Planned (from README):
 
 * Interactive TUI
+
+Landed:
+
+* [x] `reel tui` — interactive Discover/Search browsing, item detail, and requesting with a y/N confirmation, mirroring the CLI's own confirmation convention
+* [x] Requests view — list, view, and cancel existing requests from within the TUI (`s`, mirroring `reel status`/`reel delete`), with titles/years/per-season TV status resolved and cached in-memory (Seerr's `GET /request` doesn't join any of that in)
+* [x] Search results reordering — promotes a landslide-more-popular match above weak partial matches Seerr's own relevance ranking buried it behind, without a blanket popularity sort that would risk burying a precise/exact match
+* [x] Palette and layout pass — status colors/glyphs matching Seerr's own semantics (pending/processing/available/declined), consistent header/selection/muted-text treatment across every screen
 
 ## v0.5
 
