@@ -11,20 +11,24 @@ import (
 
 func TestStatusCmd_PrintsTable(t *testing.T) {
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/request" {
-			t.Errorf("path = %q, want /api/v1/request", r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v1/request":
+			w.Write([]byte(`{
+				"pageInfo": {"page": 1, "pages": 1, "results": 1},
+				"results": [{"id": 5, "status": 2, "type": "movie", "media": {"id": 10, "tmdbId": 1234, "status": 4}, "createdAt": "2026-08-01T10:00:00.000Z"}]
+			}`))
+		case "/api/v1/movie/1234":
+			w.Write([]byte(`{"title": "Dune", "releaseDate": "2021-10-22", "mediaInfo": {"id": 10, "tmdbId": 1234, "status": 4}}`))
+		default:
+			t.Errorf("path = %q, want /api/v1/request or /api/v1/movie/1234", r.URL.Path)
 		}
-		w.Write([]byte(`{
-			"pageInfo": {"page": 1, "pages": 1, "results": 1},
-			"results": [{"id": 5, "status": 2, "media": {"id": 10, "tmdbId": 1234, "status": 4}, "createdAt": "2026-08-01T10:00:00.000Z"}]
-		}`))
 	})
 
 	out, err := execute(t, "", "status")
 	if err != nil {
 		t.Fatalf("execute() returned error: %v", err)
 	}
-	for _, want := range []string{"1234", "Approved", "Partially available"} {
+	for _, want := range []string{"Dune", "2021", "Movie", "1234", "Approved", "Partially available"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q: %s", want, out)
 		}
@@ -92,6 +96,22 @@ func TestMediaStatusLabel(t *testing.T) {
 	for _, c := range cases {
 		if got := mediaStatusLabel(c.status); got != c.want {
 			t.Errorf("mediaStatusLabel(%d) = %q, want %q", c.status, got, c.want)
+		}
+	}
+}
+
+func TestMediaTypeLabel(t *testing.T) {
+	cases := []struct {
+		mediaType models.MediaType
+		want      string
+	}{
+		{models.MediaMovie, "Movie"},
+		{models.MediaTV, "TV"},
+		{models.MediaType(""), "Movie"},
+	}
+	for _, c := range cases {
+		if got := mediaTypeLabel(c.mediaType); got != c.want {
+			t.Errorf("mediaTypeLabel(%q) = %q, want %q", c.mediaType, got, c.want)
 		}
 	}
 }

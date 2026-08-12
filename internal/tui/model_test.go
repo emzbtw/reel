@@ -369,7 +369,7 @@ func TestFetchRequestsCmd_Success(t *testing.T) {
 		}
 	})
 
-	msg := fetchRequestsCmd(context.Background(), client, newTitleCache(), 2, 7)()
+	msg := fetchRequestsCmd(context.Background(), client, api.NewTitleCache(), 2, 7)()
 	loaded, ok := msg.(requestsPageLoadedMsg)
 	if !ok {
 		t.Fatalf("msg = %#v, want requestsPageLoadedMsg", msg)
@@ -394,7 +394,7 @@ func TestFetchRequestsCmd_Error(t *testing.T) {
 		w.Write([]byte(`{"message":"nope"}`))
 	})
 
-	msg := fetchRequestsCmd(context.Background(), client, newTitleCache(), 1, 3)()
+	msg := fetchRequestsCmd(context.Background(), client, api.NewTitleCache(), 1, 3)()
 	errored, ok := msg.(errMsg)
 	if !ok {
 		t.Fatalf("msg = %#v, want errMsg", msg)
@@ -415,8 +415,8 @@ func TestResolveTitles_CacheHitSkipsFetch(t *testing.T) {
 		calls++
 		w.Write([]byte(`{"title": "Dune", "mediaInfo": {"id": 1, "tmdbId": 42, "status": 2}}`))
 	})
-	cache := newTitleCache()
-	cache.set(42, api.MediaSummary{Title: "Dune (cached)", Year: "1984"})
+	cache := api.NewTitleCache()
+	cache.Set(42, api.MediaSummary{Title: "Dune (cached)", Year: "1984"})
 
 	items := []requestItem{{id: 9, mediaType: models.MediaMovie, tmdbID: 42}}
 	resolveTitles(context.Background(), client, cache, items)
@@ -436,7 +436,7 @@ func TestResolveTitles_CacheMissFetchesAndPopulatesCache(t *testing.T) {
 		}
 		w.Write([]byte(`{"name": "Chernobyl", "firstAirDate": "2019-05-06", "mediaInfo": {"id": 1, "tmdbId": 87108, "status": 5}}`))
 	})
-	cache := newTitleCache()
+	cache := api.NewTitleCache()
 
 	items := []requestItem{{id: 9, mediaType: models.MediaTV, tmdbID: 87108}}
 	resolveTitles(context.Background(), client, cache, items)
@@ -444,8 +444,8 @@ func TestResolveTitles_CacheMissFetchesAndPopulatesCache(t *testing.T) {
 	if items[0].title != "Chernobyl" || items[0].year != "2019" {
 		t.Errorf("items[0] title/year = %q/%q, want %q/%q", items[0].title, items[0].year, "Chernobyl", "2019")
 	}
-	if got, ok := cache.get(87108); !ok || got.Title != "Chernobyl" || got.Year != "2019" {
-		t.Errorf("cache.get(87108) = %+v, %v, want Title=Chernobyl Year=2019, true (populated for next time)", got, ok)
+	if got, ok := cache.Get(87108); !ok || got.Title != "Chernobyl" || got.Year != "2019" {
+		t.Errorf("cache.Get(87108) = %+v, %v, want Title=Chernobyl Year=2019, true (populated for next time)", got, ok)
 	}
 }
 
@@ -463,7 +463,7 @@ func TestResolveTitles_FailedLookupDoesNotFailThePage(t *testing.T) {
 		}
 		w.Write([]byte(`{"title": "Dune", "mediaInfo": {"id": 1, "tmdbId": 42, "status": 2}}`))
 	})
-	cache := newTitleCache()
+	cache := api.NewTitleCache()
 
 	items := []requestItem{
 		{id: 8, mediaType: models.MediaMovie, tmdbID: 1},

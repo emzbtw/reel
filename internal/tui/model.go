@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -273,40 +272,6 @@ func dateOnly(s string) string {
 	return s[:10]
 }
 
-// titleCache is an in-session, concurrency-safe TMDB-ID -> title/year cache:
-// a request page visited a second time (paging back and forth, or after a
-// delete shifted later pages up) resolves already-seen titles from here
-// instead of refetching them. Held as a pointer on model so the same cache
-// survives Bubble Tea's per-Update value copies of model rather than being
-// recreated (and emptied) on every message. Purely in-memory — nothing
-// here is written to disk, and it's gone when the process exits.
-//
-// The mutex is needed because fetchRequestsCmd resolves cache misses with
-// concurrent goroutines (see resolveTitles): without it, two of that
-// fetch's own goroutines writing to the same map at once — or two
-// overlapping fetches, from paging quickly — would race.
-type titleCache struct {
-	mu sync.Mutex
-	m  map[int]api.MediaSummary
-}
-
-func newTitleCache() *titleCache {
-	return &titleCache{m: make(map[int]api.MediaSummary)}
-}
-
-func (c *titleCache) get(tmdbID int) (api.MediaSummary, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	s, ok := c.m[tmdbID]
-	return s, ok
-}
-
-func (c *titleCache) set(tmdbID int, s api.MediaSummary) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.m[tmdbID] = s
-}
-
 // model is the root bubbletea model driving reel's TUI.
 type model struct {
 	ctx    context.Context
@@ -344,8 +309,10 @@ type model struct {
 	// since DeleteRequest's response carries nothing else to show.
 	deletedRequestID int
 	// titles resolves requestItem titles across the life of the program —
-	// see titleCache's doc comment.
-	titles *titleCache
+	// see api.TitleCache's doc comment. Held as a pointer so the same cache
+	// survives Bubble Tea's per-Update value copies of model rather than
+	// being recreated (and emptied) on every message.
+	titles *api.TitleCache
 
 	loading bool
 	err     error
@@ -403,7 +370,7 @@ func newModel(ctx context.Context, client *api.Client) model {
 		list:        l,
 		page:        1,
 		spinner:     sp,
-		titles:      newTitleCache(),
+		titles:      api.NewTitleCache(),
 	}
 }
 
@@ -510,7 +477,7 @@ const requestsPageSize = 20
 
 // fetchRequestsCmd fetches one page of existing requests, via the same
 // ListRequests call internal/cli's status command uses.
-func fetchRequestsCmd(ctx context.Context, client *api.Client, cache *titleCache, page, seq int) tea.Cmd {
+func fetchRequestsCmd(ctx context.Context, client *api.Client, cache *api.TitleCache, page, seq int) tea.Cmd {
 	return func() tea.Msg {
 		if page < 1 {
 			page = 1
@@ -533,35 +500,21 @@ func fetchRequestsCmd(ctx context.Context, client *api.Client, cache *titleCache
 	}
 }
 
-// resolveTitles fills in items' title/year in place: a cache hit is used
-// directly (no request), a miss is looked up via MediaSummary and cached
-// for next time. Misses are resolved concurrently — up to requestsPageSize
-// (20) at once, small and bounded enough that a worker pool would be
-// overhead for no benefit — since each is an independent HTTP call to a
-// different TMDB ID with no shared state beyond the cache, which is
-// already safe for concurrent access. A failed lookup (e.g. a since-
-// deleted TMDB entry) leaves that item's title/year empty rather than
-// failing the whole page; requestItem.Title falls back to the TMDB ID (and
-// omits the year) for it.
-func resolveTitles(ctx context.Context, client *api.Client, cache *titleCache, items []requestItem) {
-	var wg sync.WaitGroup
-	for i := range items {
-		if s, ok := cache.get(items[i].tmdbID); ok {
-			items[i].title, items[i].year = s.Title, s.Year
-			continue
-		}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			s, err := client.MediaSummary(ctx, items[i].mediaType, items[i].tmdbID)
-			if err != nil || s.Title == "" {
-				return
-			}
-			items[i].title, items[i].year = s.Title, s.Year
-			cache.set(items[i].tmdbID, s)
-		}(i)
+// resolveTitles fills in items' title/year in place, via the same cached,
+// concurrent TMDB-ID lookup internal/cli's request tables use — see
+// api.ResolveTitles's doc comment. A failed lookup (e.g. a since-deleted
+// TMDB entry) leaves that item's title/year empty rather than failing the
+// whole page; requestItem.Title falls back to the TMDB ID (and omits the
+// year) for it.
+func resolveTitles(ctx context.Context, client *api.Client, cache *api.TitleCache, items []requestItem) {
+	queries := make([]api.TitleQuery, len(items))
+	for i, it := range items {
+		queries[i] = api.TitleQuery{MediaType: it.mediaType, TmdbID: it.tmdbID}
 	}
-	wg.Wait()
+	summaries := api.ResolveTitles(ctx, client, cache, queries)
+	for i, s := range summaries {
+		items[i].title, items[i].year = s.Title, s.Year
+	}
 }
 
 // deleteRequestCmd deletes a request, via the same DeleteRequest call

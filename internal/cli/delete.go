@@ -33,7 +33,7 @@ there is no bypass flag in this pass.`,
 			return err
 		}
 
-		printRequestsTable(cmd.OutOrStdout(), []models.MediaRequest{*req})
+		printRequestsTable(cmd.Context(), cmd.OutOrStdout(), client, []models.MediaRequest{*req})
 		fmt.Fprint(cmd.OutOrStdout(), "Delete this request? [y/N]: ")
 
 		line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')

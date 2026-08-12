@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/emzbtw/reel/internal/models"
 )
@@ -103,4 +104,74 @@ func (c *Client) MediaSummary(ctx context.Context, t models.MediaType, tmdbID in
 		return MediaSummary{}, err
 	}
 	return MediaSummary{Title: d.titleOrName(), Year: year(d.releaseOrFirstAirDate())}, nil
+}
+
+// TitleCache is an in-session, concurrency-safe TMDB-ID -> MediaSummary
+// cache shared by anything that lists requests (internal/tui's requests
+// view, internal/cli's status/delete tables): the same TMDB ID looked up
+// twice within the cache's lifetime is resolved once and reused instead of
+// refetched. Purely in-memory — nothing here is written to disk.
+//
+// The mutex is needed because ResolveTitles resolves cache misses with
+// concurrent goroutines: without it, two of its own goroutines writing to
+// the same map at once — or two overlapping ResolveTitles calls sharing a
+// cache — would race.
+type TitleCache struct {
+	mu sync.Mutex
+	m  map[int]MediaSummary
+}
+
+// NewTitleCache returns an empty TitleCache ready to use.
+func NewTitleCache() *TitleCache {
+	return &TitleCache{m: make(map[int]MediaSummary)}
+}
+
+func (c *TitleCache) Get(tmdbID int) (MediaSummary, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s, ok := c.m[tmdbID]
+	return s, ok
+}
+
+func (c *TitleCache) Set(tmdbID int, s MediaSummary) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[tmdbID] = s
+}
+
+// TitleQuery identifies one item ResolveTitles should resolve a title for.
+type TitleQuery struct {
+	MediaType models.MediaType
+	TmdbID    int
+}
+
+// ResolveTitles resolves a MediaSummary for each query, in the same order:
+// a cache hit is used directly (no request), a miss is looked up via
+// MediaSummary and cached for next time. Misses are resolved concurrently —
+// up to len(queries) at once, since each is an independent HTTP call to a
+// different TMDB ID with no shared state beyond the cache, which is already
+// safe for concurrent access; callers passing a large batch should bound it
+// themselves. A failed lookup (e.g. a since-deleted TMDB entry) leaves that
+// query's result as the zero MediaSummary rather than failing the batch.
+func ResolveTitles(ctx context.Context, client *Client, cache *TitleCache, queries []TitleQuery) []MediaSummary {
+	out := make([]MediaSummary, len(queries))
+	var wg sync.WaitGroup
+	for i, q := range queries {
+		if s, ok := cache.Get(q.TmdbID); ok {
+			out[i] = s
+			continue
+		}
+		wg.Add(1)
+		go func(i int, q TitleQuery) {
+			defer wg.Done()
+			s, err := client.MediaSummary(ctx, q.MediaType, q.TmdbID)
+			if err != nil || s.Title == "" {
+				return
+			}
+			out[i] = s
+			cache.Set(q.TmdbID, s)
+		}(i, q)
+	}
+	wg.Wait()
+	return out
 }
