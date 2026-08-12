@@ -16,6 +16,7 @@ var (
 	syncDryRun bool
 	syncYes    bool
 	syncRetry  bool
+	syncQuiet  bool
 )
 
 var syncCmd = &cobra.Command{
@@ -47,50 +48,72 @@ file.`,
 			return fmt.Errorf("no notes to sync: pass a path, or set obsidian_notes in the config file")
 		}
 
-		for i, note := range notes {
+		printedAny := false
+		for _, note := range notes {
+			header := ""
 			if len(notes) > 1 {
-				if i > 0 {
-					fmt.Fprintln(cmd.OutOrStdout())
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "== %s\n", note)
+				header = note
 			}
-			if err := syncNote(cmd, note); err != nil {
+			printed, err := syncNote(cmd, note, header, printedAny)
+			if err != nil {
 				return err
 			}
+			printedAny = printedAny || printed
 		}
 		return nil
 	},
 }
 
-func syncNote(cmd *cobra.Command, note string) error {
+// syncNote syncs one note and reports whether it printed anything, so a
+// multi-note run can decide whether the next note's header needs a blank
+// line above it. header is printed only if the note turns out not to be
+// suppressed by --quiet; separator adds a blank line above it when an
+// earlier note already printed something.
+func syncNote(cmd *cobra.Command, note, header string, separator bool) (bool, error) {
+	var retried int
 	if syncRetry {
 		n, err := forgetFailed(note)
 		if err != nil {
-			return err
+			return false, err
 		}
-		if n > 0 && !jsonOutput {
-			fmt.Fprintf(cmd.OutOrStdout(), "Retrying %d previously failed line(s).\n", n)
-		}
+		retried = n
 	}
 
 	plan, err := obsidian.BuildPlan(cmd.Context(), client, note)
 	if err != nil {
-		return err
+		return false, err
+	}
+
+	suppress := syncQuiet && !hasChanges(plan)
+
+	if !suppress {
+		if header != "" {
+			if separator {
+				fmt.Fprintln(cmd.OutOrStdout())
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "== %s\n", header)
+		}
+		if retried > 0 && !jsonOutput {
+			fmt.Fprintf(cmd.OutOrStdout(), "Retrying %d previously failed line(s).\n", retried)
+		}
 	}
 
 	if jsonOutput {
 		if syncDryRun {
-			return writeJSON(cmd.OutOrStdout(), plan.Items)
+			if suppress {
+				return false, nil
+			}
+			return true, writeJSON(cmd.OutOrStdout(), plan.Items)
 		}
-	} else {
+	} else if !suppress {
 		printPlan(cmd.OutOrStdout(), plan)
 	}
 
 	if syncDryRun {
-		if !jsonOutput {
+		if !jsonOutput && !suppress {
 			fmt.Fprintln(cmd.OutOrStdout(), "\nDry run: nothing was requested or written.")
 		}
-		return nil
+		return !suppress, nil
 	}
 
 	// Requesting reaches outside this machine and is not trivially
@@ -99,24 +122,44 @@ func syncNote(cmd *cobra.Command, note string) error {
 	if reqs := plan.Requests(); len(reqs) > 0 && !syncYes {
 		ok, err := confirm(cmd, fmt.Sprintf("Submit %d request(s)?", len(reqs)))
 		if err != nil {
-			return err
+			return !suppress, err
 		}
 		if !ok {
 			fmt.Fprintln(cmd.OutOrStdout(), "Cancelled.")
-			return nil
+			return !suppress, nil
 		}
 	}
 
 	res, err := obsidian.Apply(cmd.Context(), client, plan)
 	if err != nil {
-		return err
+		return !suppress, err
+	}
+
+	if suppress {
+		return false, nil
 	}
 
 	if jsonOutput {
-		return writeJSON(cmd.OutOrStdout(), res)
+		return true, writeJSON(cmd.OutOrStdout(), res)
 	}
 	printResult(cmd.OutOrStdout(), res)
-	return nil
+	return true, nil
+}
+
+// hasChanges reports whether a plan has anything worth surfacing under
+// --quiet: a request, a marker write, or an item that needs the user's
+// attention. Skipped lines (opted out, already checked off, etc.) don't
+// count — they're routine, not something to catch up on later.
+func hasChanges(plan *obsidian.Plan) bool {
+	if len(plan.Requests()) > 0 || len(plan.Ambiguous()) > 0 {
+		return true
+	}
+	for _, it := range plan.Items {
+		if it.Action == obsidian.ActionMarker {
+			return true
+		}
+	}
+	return false
 }
 
 // forgetFailed drops the bindings for lines currently showing "[✗]" so the
@@ -246,4 +289,5 @@ func init() {
 	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "show what would happen without requesting or writing anything")
 	syncCmd.Flags().BoolVar(&syncYes, "yes", false, "skip the confirmation prompt before submitting requests")
 	syncCmd.Flags().BoolVar(&syncRetry, "retry", false, "forget bindings for lines marked [✗] so they are requested again")
+	syncCmd.Flags().BoolVar(&syncQuiet, "quiet", false, "suppress output when nothing was requested or written and nothing is ambiguous")
 }
