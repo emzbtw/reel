@@ -91,9 +91,7 @@ Possible features:
 * View artwork and metadata
 * Keyboard-driven navigation
 * Request media
-* Monitor download progress
 * View request history
-* Open media in Jellyfin once available
 
 ---
 
@@ -140,9 +138,7 @@ The project should become a central hub for personal media management.
 Possible future capabilities include:
 
 * Unified search across multiple services
-* Download monitoring
 * Calendar of upcoming episodes
-* Notifications when requests complete
 * Watch history
 * Trakt synchronization
 * Import/export watchlists
