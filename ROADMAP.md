@@ -68,6 +68,14 @@ Landed:
 * [x] Search results reordering — promotes a landslide-more-popular match above weak partial matches Seerr's own relevance ranking buried it behind, without a blanket popularity sort that would risk burying a precise/exact match
 * [x] Palette and layout pass — status colors/glyphs matching Seerr's own semantics (pending/processing/available/declined), consistent header/selection/muted-text treatment across every screen
 
+Changes since:
+
+* [x] The TUI is now the default entry point — bare `reel` launches it instead of
+  printing help, making the CLI subcommands the scripted path rather than the
+  primary one. `reel tui` still works but is hidden from `--help` and the
+  generated completions. On a non-TTY (piped, redirected, CI) bare `reel` falls
+  back to printing help, so scripts and smoke checks are unaffected.
+
 ## v1.0
 
 A polished terminal-first media companion that unifies discovery, requesting, tracking, and personal media organization into a single, extensible tool.

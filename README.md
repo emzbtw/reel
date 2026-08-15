@@ -58,9 +58,9 @@ The browser should not be the only way to manage a media library.
 
 Many self-hosters already spend much of their time in the terminal and in knowledge management tools such as Obsidian. This project aims to meet users where they already work instead of requiring them to open multiple web applications.
 
-The CLI should be useful on its own.
+The TUI is the default way in: running `reel` with no arguments opens it.
 
-The TUI should enhance the CLI rather than replace it.
+The CLI should still be useful on its own, for scripting and one-off lookups.
 
 ---
 
@@ -100,6 +100,15 @@ The CLI produces clean, readable output that works well in terminals and scripts
 ## TUI
 
 The TUI provides an interactive experience inspired by modern terminal applications.
+
+Run `reel` with no arguments to launch it:
+
+```text
+reel
+```
+
+When output isn't a terminal (piped, redirected, or in CI), bare `reel` prints
+the command help instead, so it stays safe to use in scripts.
 
 Features:
 
