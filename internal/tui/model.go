@@ -343,7 +343,7 @@ func newModel(ctx context.Context, client *api.Client) model {
 	delegate.Styles.SelectedDesc = lipgloss.NewStyle().
 		Foreground(colorMuted).
 		Padding(0, 0, 0, 3)
-	delegate.SetSpacing(0) // default's blank line between items is more gap than these two-line rows need
+	delegate.SetSpacing(1) // blank line between items: without it the two-line rows run together
 	l := list.New(nil, delegate, 0, 0)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
