@@ -114,6 +114,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.Select(0)
 		return m, nil
 
+	case sonarrServersLoadedMsg:
+		if msg.err == nil {
+			m.sonarrServers = msg.servers
+		}
+		return m, nil
+
 	case deleteResultMsg:
 		m.loading = false
 		m.err = msg.err
@@ -294,10 +300,21 @@ func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch keyMsg.String() {
 	case "r", "enter":
 		m.mode = modeConfirm
+		// A stale server pick from a previous TV request must never
+		// silently carry into this one.
+		m.serverIdx = m.defaultServerIdx()
 	case "esc", "b":
 		m.mode = modeBrowsing
 	}
 	return m, nil
+}
+
+// canPickServer reports whether the confirm screen has a real choice of
+// Sonarr instance to offer: only for a TV item, and only once more than one
+// server is known (a single-server or failed-fetch case has nothing to
+// cycle through).
+func (m model) canPickServer() bool {
+	return m.selected.mediaType == models.MediaTV && len(m.sonarrServers) > 1
 }
 
 func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -306,10 +323,14 @@ func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch keyMsg.String() {
+	case "s":
+		if m.canPickServer() {
+			m.serverIdx = (m.serverIdx + 1) % len(m.sonarrServers)
+		}
 	case "y":
 		m.loading = true
 		m.err = nil
-		return m, submitRequestCmd(m.ctx, m.client, m.selected)
+		return m, submitRequestCmd(m.ctx, m.client, m.selected, m.selectedServerID())
 	// "enter" cancels along with "n"/"esc": a bare enter on a [y/N] prompt
 	// should take the shown default (N), not be a no-op.
 	case "n", "esc", "enter":

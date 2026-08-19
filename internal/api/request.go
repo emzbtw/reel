@@ -18,6 +18,12 @@ type CreateRequestInput struct {
 	MediaID    int
 	AllSeasons bool
 	Seasons    []int
+	// ServerID picks which configured Sonarr/Radarr instance handles this
+	// request (Seerr Settings → Services), overriding Seerr's own default.
+	// A pointer because Seerr's server IDs are 0-indexed array positions —
+	// 0 is a real, valid ID, so a plain int couldn't distinguish "use
+	// server 0" from "no override". nil omits the field entirely.
+	ServerID *int
 }
 
 type createRequestBody struct {
@@ -25,7 +31,8 @@ type createRequestBody struct {
 	MediaID   int    `json:"mediaId"`
 	// Seasons is either "all" or a []int, matching the spec's
 	// oneOf(number[], "all").
-	Seasons any `json:"seasons,omitempty"`
+	Seasons  any  `json:"seasons,omitempty"`
+	ServerID *int `json:"serverId,omitempty"`
 }
 
 // CreateRequest submits a new media request.
@@ -33,6 +40,7 @@ func (c *Client) CreateRequest(ctx context.Context, in CreateRequestInput) (*mod
 	body := createRequestBody{
 		MediaType: string(in.MediaType),
 		MediaID:   in.MediaID,
+		ServerID:  in.ServerID,
 	}
 	switch {
 	case in.AllSeasons:

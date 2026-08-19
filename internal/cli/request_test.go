@@ -277,3 +277,100 @@ func TestRequestCmd_SelectValidation(t *testing.T) {
 		})
 	}
 }
+
+const sonarrServersResponse = `[
+	{"id": 0, "name": "Sonarr", "isDefault": true},
+	{"id": 1, "name": "Sonarr Anime", "isDefault": false}
+]`
+
+func TestRequestCmd_SelectTVWithServer(t *testing.T) {
+	var gotBody map[string]any
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/service/sonarr":
+			w.Write([]byte(sonarrServersResponse))
+		case r.URL.Path == "/api/v1/request" && r.Method == http.MethodPost:
+			b, _ := io.ReadAll(r.Body)
+			json.Unmarshal(b, &gotBody)
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id": 101, "status": 1}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	// Matching is case-insensitive.
+	if _, err := execute(t, "", "request", "--select", "1", "--type", "tv", "--server", "sonarr anime"); err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+	if gotBody["serverId"] != float64(1) {
+		t.Errorf("request body serverId = %+v, want 1", gotBody["serverId"])
+	}
+}
+
+// TestRequestCmd_SelectTVWithServerIDZero guards the same edge case as
+// TestCreateRequest_ServerIDZero one layer down: sonarrServersResponse's
+// "Sonarr" entry has id 0, and that must reach the POST body as
+// "serverId":0, not be silently dropped as if unset.
+func TestRequestCmd_SelectTVWithServerIDZero(t *testing.T) {
+	var gotBody map[string]any
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/service/sonarr":
+			w.Write([]byte(sonarrServersResponse))
+		case r.URL.Path == "/api/v1/request" && r.Method == http.MethodPost:
+			b, _ := io.ReadAll(r.Body)
+			json.Unmarshal(b, &gotBody)
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id": 102, "status": 1}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	if _, err := execute(t, "", "request", "--select", "1", "--type", "tv", "--server", "Sonarr"); err != nil {
+		t.Fatalf("execute() returned error: %v", err)
+	}
+	got, ok := gotBody["serverId"]
+	if !ok {
+		t.Fatal("request body omits serverId entirely, want serverId:0")
+	}
+	if got != float64(0) {
+		t.Errorf("request body serverId = %+v, want 0", got)
+	}
+}
+
+func TestRequestCmd_SelectServerNotFound(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/service/sonarr":
+			w.Write([]byte(sonarrServersResponse))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	_, err := execute(t, "", "request", "--select", "1", "--type", "tv", "--server", "nope")
+	if err == nil {
+		t.Fatal("execute() returned nil error, want an unknown-server error")
+	}
+	for _, want := range []string{`server "nope" not found`, "Sonarr", "Sonarr Anime"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to contain %q", err, want)
+		}
+	}
+}
+
+func TestRequestCmd_SelectServerMovieErrors(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request should have been made: %s %s", r.Method, r.URL.Path)
+	})
+
+	_, err := execute(t, "", "request", "--select", "1", "--type", "movie", "--server", "Sonarr Anime")
+	if err == nil {
+		t.Fatal("execute() returned nil error, want --server-on-movie error")
+	}
+	if !strings.Contains(err.Error(), "--server is only supported for TV requests") {
+		t.Errorf("err = %q, want the TV-only message", err)
+	}
+}

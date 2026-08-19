@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/emzbtw/reel/internal/api"
 	"github.com/emzbtw/reel/internal/models"
 )
 
@@ -140,6 +141,77 @@ func TestView_Confirm(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("View() missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestView_Confirm_TVShowsServerPick checks the confirm screen surfaces the
+// current Sonarr server choice — and the "s: server" hint — only when
+// there's a real choice to make (TV, with more than one server known).
+func TestView_Confirm_TVShowsServerPick(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeConfirm
+	m.selected = testItem()
+	m.selected.mediaType = models.MediaTV
+	m.sonarrServers = testServers()
+	m.serverIdx = 1 // "Sonarr Anime"
+
+	out := m.View()
+	for _, want := range []string{"Server: Sonarr Anime", "s: server"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("View() missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Sonarr (default)") {
+		t.Errorf("View() shows the default server while Sonarr Anime is picked:\n%s", out)
+	}
+}
+
+// TestView_Confirm_TVDefaultServerLabeled checks the server Seerr itself
+// defaults to is labeled as such — entering modeConfirm resets serverIdx to
+// it (see updateDetail), so this is what a fresh TV request confirm screen
+// shows before the user ever presses "s".
+func TestView_Confirm_TVDefaultServerLabeled(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeConfirm
+	m.selected = testItem()
+	m.selected.mediaType = models.MediaTV
+	m.sonarrServers = testServers()
+	m.serverIdx = 0 // "Sonarr", the one marked IsDefault in testServers()
+
+	out := m.View()
+	if !strings.Contains(out, "Server: Sonarr (default)") {
+		t.Errorf("View() missing %q:\n%s", "Server: Sonarr (default)", out)
+	}
+}
+
+// TestView_Confirm_NoServerPickWithoutChoice mirrors
+// TestUpdate_Confirm_SNoopsWithoutChoice: neither the server line nor its
+// footer hint should appear when there's nothing to cycle through.
+func TestView_Confirm_NoServerPickWithoutChoice(t *testing.T) {
+	tests := []struct {
+		name    string
+		tv      bool
+		servers []api.SonarrServer
+	}{
+		{"movie with servers", false, testServers()},
+		{"TV with one server", true, testServers()[:1]},
+		{"TV with no servers loaded", true, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModel(context.Background(), nil)
+			m.mode = modeConfirm
+			m.selected = testItem()
+			if tt.tv {
+				m.selected.mediaType = models.MediaTV
+			}
+			m.sonarrServers = tt.servers
+
+			out := m.View()
+			if strings.Contains(out, "Server:") || strings.Contains(out, "s: server") {
+				t.Errorf("View() unexpectedly shows a server pick:\n%s", out)
+			}
+		})
 	}
 }
 

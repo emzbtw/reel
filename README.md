@@ -95,6 +95,11 @@ reel sync
 
 The CLI produces clean, readable output that works well in terminals and scripts.
 
+For a Seerr setup with more than one Sonarr instance (e.g. a separate one for
+anime), `reel request` takes `--server <name>` to route a TV request to a
+specific instance instead of Seerr's default — see Seerr's Settings →
+Services for the configured names.
+
 ---
 
 ## TUI
@@ -116,6 +121,7 @@ Features:
 * Search Seerr, with results replacing the browse list
 * Keyboard-driven navigation
 * Request media, with a confirmation step
+* Route a TV request to a specific Sonarr instance from the confirm screen (`s`), when more than one is configured
 * View and cancel existing requests
 
 ---

@@ -87,6 +87,85 @@ func TestCreateRequest_TVAllSeasons(t *testing.T) {
 	}
 }
 
+func TestCreateRequest_ServerID(t *testing.T) {
+	var gotBody map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id": 9, "status": 1}`))
+	})
+
+	serverID := 1
+	_, err := c.CreateRequest(context.Background(), CreateRequestInput{
+		MediaType:  models.MediaTV,
+		MediaID:    456,
+		AllSeasons: true,
+		ServerID:   &serverID,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest() returned error: %v", err)
+	}
+	if gotBody["serverId"] != float64(1) {
+		t.Errorf("request body serverId = %+v, want 1", gotBody["serverId"])
+	}
+}
+
+// TestCreateRequest_ServerIDZero locks down the exact reason
+// CreateRequestInput.ServerID is a *int rather than a plain int: Seerr's
+// server IDs are 0-indexed array positions, so 0 is a real, valid ID. json's
+// omitempty on a pointer field only checks nilness, not the pointee's zero
+// value, so this must come through as "serverId":0, not be dropped.
+func TestCreateRequest_ServerIDZero(t *testing.T) {
+	var gotBody map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id": 11, "status": 1}`))
+	})
+
+	serverID := 0
+	_, err := c.CreateRequest(context.Background(), CreateRequestInput{
+		MediaType:  models.MediaTV,
+		MediaID:    456,
+		AllSeasons: true,
+		ServerID:   &serverID,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest() returned error: %v", err)
+	}
+	got, ok := gotBody["serverId"]
+	if !ok {
+		t.Fatal("request body omits serverId entirely, want serverId:0")
+	}
+	if got != float64(0) {
+		t.Errorf("request body serverId = %+v, want 0", got)
+	}
+}
+
+func TestCreateRequest_NoServerIDOmitsField(t *testing.T) {
+	var gotBody map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id": 10, "status": 1}`))
+	})
+
+	_, err := c.CreateRequest(context.Background(), CreateRequestInput{
+		MediaType:  models.MediaTV,
+		MediaID:    456,
+		AllSeasons: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest() returned error: %v", err)
+	}
+	if _, ok := gotBody["serverId"]; ok {
+		t.Errorf("request body should not include serverId: %+v", gotBody)
+	}
+}
+
 func TestListRequests(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("filter"); got != "pending" {

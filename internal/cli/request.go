@@ -15,6 +15,7 @@ import (
 var (
 	requestSelectID int
 	requestType     string
+	requestServer   string
 )
 
 var requestCmd = &cobra.Command{
@@ -57,7 +58,12 @@ func runSelectedRequest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	input := api.CreateRequestInput{MediaType: mediaType, MediaID: requestSelectID}
+	serverID, err := resolveRequestServer(cmd, mediaType)
+	if err != nil {
+		return err
+	}
+
+	input := api.CreateRequestInput{MediaType: mediaType, MediaID: requestSelectID, ServerID: serverID}
 	if mediaType == models.MediaTV {
 		input.AllSeasons = true
 	}
@@ -103,9 +109,15 @@ func runInteractiveRequest(cmd *cobra.Command, query string) error {
 	}
 	picked := items[n-1]
 
+	serverID, err := resolveRequestServer(cmd, picked.Type)
+	if err != nil {
+		return err
+	}
+
 	input := api.CreateRequestInput{
 		MediaType: picked.Type,
 		MediaID:   picked.ID,
+		ServerID:  serverID,
 	}
 	if picked.Type == models.MediaTV {
 		input.AllSeasons = true
@@ -124,6 +136,37 @@ func runInteractiveRequest(cmd *cobra.Command, query string) error {
 	return nil
 }
 
+// resolveRequestServer turns --server into a *api.CreateRequestInput.ServerID
+// for a request of the given mediaType. Empty --server is a no-op (nil,
+// nil). --server only makes sense for TV (it resolves against Seerr's
+// configured Sonarr instances) so it errors rather than being silently
+// ignored for a movie request.
+func resolveRequestServer(cmd *cobra.Command, mediaType models.MediaType) (*int, error) {
+	if requestServer == "" {
+		return nil, nil
+	}
+	if mediaType != models.MediaTV {
+		return nil, fmt.Errorf("--server is only supported for TV requests")
+	}
+
+	servers, err := client.ListSonarrServers(cmd.Context())
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range servers {
+		if strings.EqualFold(s.Name, requestServer) {
+			id := s.ID
+			return &id, nil
+		}
+	}
+
+	names := make([]string, len(servers))
+	for i, s := range servers {
+		names[i] = s.Name
+	}
+	return nil, fmt.Errorf("server %q not found; available: %s", requestServer, strings.Join(names, ", "))
+}
+
 func parseMediaType(s string) (models.MediaType, error) {
 	switch strings.ToLower(s) {
 	case "movie":
@@ -138,4 +181,5 @@ func parseMediaType(s string) (models.MediaType, error) {
 func init() {
 	requestCmd.Flags().IntVar(&requestSelectID, "select", 0, "TMDB ID to request directly, skipping search and the picker (requires --type)")
 	requestCmd.Flags().StringVar(&requestType, "type", "", "media type for --select: movie or tv")
+	requestCmd.Flags().StringVar(&requestServer, "server", "", "Sonarr server name to route a TV request to (see Seerr Settings → Services); TV only")
 }

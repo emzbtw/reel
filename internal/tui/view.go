@@ -189,7 +189,11 @@ func (m model) detailView() string {
 
 	box := m.sized(boxStyle).Render(b.String())
 	if m.mode == modeConfirm {
-		prompt := m.sized(promptStyle).Render(fmt.Sprintf("Request %q? [y/N]", it.title))
+		promptText := fmt.Sprintf("Request %q? [y/N]", it.title)
+		if m.canPickServer() {
+			promptText += fmt.Sprintf("  Server: %s", m.selectedServerName())
+		}
+		prompt := m.sized(promptStyle).Render(promptText)
 		return lipgloss.JoinVertical(lipgloss.Left, box, m.standaloneDivider(), prompt)
 	}
 	return box
@@ -314,7 +318,12 @@ func (m model) footerHints() string {
 		return "enter: search  esc: cancel"
 	case modeDetail:
 		return "r/enter: request  esc: back  q: quit"
-	case modeConfirm, modeRequestConfirm:
+	case modeConfirm:
+		if m.canPickServer() {
+			return "y: confirm  n/esc: cancel  s: server  q: quit"
+		}
+		return "y: confirm  n/esc: cancel  q: quit"
+	case modeRequestConfirm:
 		return "y: confirm  n/esc: cancel  q: quit"
 	case modeResult, modeRequestResult:
 		return "any key: continue  q: quit"

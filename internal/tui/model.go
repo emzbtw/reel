@@ -297,6 +297,20 @@ type model struct {
 	selected    browseItem
 	lastRequest *models.MediaRequest
 
+	// sonarrServers is fetched once at startup (see Init) so a TV request's
+	// confirm screen can offer routing to a specific Sonarr instance
+	// (Seerr Settings → Services) instead of always taking Seerr's default.
+	// A failed fetch leaves this empty rather than setting m.err — some
+	// Seerr setups have no Sonarr configured at all, and that must never
+	// block browsing or movie requests.
+	sonarrServers []api.SonarrServer
+	// serverIdx is modeConfirm's current pick, indexing sonarrServers
+	// directly. Reset to defaultServerIdx() every time a fresh item enters
+	// modeConfirm — there's no separate "no override" choice, since that's
+	// behaviorally identical to explicitly picking whichever server Seerr
+	// itself already defaults to.
+	serverIdx int
+
 	// requestsPage/requestsTotalPages are modeRequests' own paging state,
 	// kept separate from page/totalPages (Discover/Search's) so leaving
 	// requests and coming back to browsing doesn't lose your place there —
@@ -375,7 +389,11 @@ func newModel(ctx context.Context, client *api.Client) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, fetchPageCmd(m.ctx, m.client, m.source, m.mediaType, m.query, m.page, m.loadSeq))
+	return tea.Batch(
+		m.spinner.Tick,
+		fetchPageCmd(m.ctx, m.client, m.source, m.mediaType, m.query, m.page, m.loadSeq),
+		fetchSonarrServersCmd(m.ctx, m.client),
+	)
 }
 
 // Messages
@@ -413,6 +431,11 @@ type requestsPageLoadedMsg struct {
 type deleteResultMsg struct {
 	id  int
 	err error
+}
+
+type sonarrServersLoadedMsg struct {
+	servers []api.SonarrServer
+	err     error
 }
 
 // Commands
@@ -457,15 +480,78 @@ func fetchPageCmd(ctx context.Context, client *api.Client, src source, mediaType
 	}
 }
 
-func submitRequestCmd(ctx context.Context, client *api.Client, item browseItem) tea.Cmd {
+func submitRequestCmd(ctx context.Context, client *api.Client, item browseItem, serverID *int) tea.Cmd {
 	return func() tea.Msg {
-		input := api.CreateRequestInput{MediaType: item.mediaType, MediaID: item.id}
+		input := api.CreateRequestInput{MediaType: item.mediaType, MediaID: item.id, ServerID: serverID}
 		if item.mediaType == models.MediaTV {
 			input.AllSeasons = true
 		}
 		req, err := client.CreateRequest(ctx, input)
 		return requestResultMsg{req: req, err: err}
 	}
+}
+
+// fetchSonarrServersCmd is a best-effort background fetch, batched
+// alongside the initial page load in Init — see sonarrServers' doc comment.
+func fetchSonarrServersCmd(ctx context.Context, client *api.Client) tea.Cmd {
+	return func() tea.Msg {
+		servers, err := client.ListSonarrServers(ctx)
+		return sonarrServersLoadedMsg{servers: servers, err: err}
+	}
+}
+
+// serverIdxInRange clamps serverIdx to a valid index of sonarrServers,
+// falling back to 0 — sonarrServers can shrink to empty (a failed refetch
+// never happens today, but this keeps the accessors below panic-free either
+// way) or serverIdx can be left over from a longer server list.
+func (m model) serverIdxInRange() int {
+	if m.serverIdx < 0 || m.serverIdx >= len(m.sonarrServers) {
+		return 0
+	}
+	return m.serverIdx
+}
+
+// selectedServerID resolves serverIdx into the *int CreateRequestInput
+// expects: nil for a movie (sonarrServers indexes Sonarr instances, not
+// Radarr — sending one here would silently reroute a movie to whichever
+// Radarr instance happens to share that numeric ID) or when no servers are
+// known at all (a failed fetch, or a Seerr setup with no Sonarr
+// configured). Otherwise the picked server's ID, explicitly, even when
+// it's the one Seerr already defaults to, since that's simplest and
+// behaviorally identical to omitting it.
+func (m model) selectedServerID() *int {
+	if m.selected.mediaType != models.MediaTV || len(m.sonarrServers) == 0 {
+		return nil
+	}
+	id := m.sonarrServers[m.serverIdxInRange()].ID
+	return &id
+}
+
+// selectedServerName is selectedServerID's display counterpart, for the
+// confirm prompt. The server Seerr itself defaults to is labeled as such,
+// so cycling between two servers reads as "Sonarr (default)" / "Sonarr
+// Anime" rather than a bare, unexplained name.
+func (m model) selectedServerName() string {
+	if len(m.sonarrServers) == 0 {
+		return "default"
+	}
+	s := m.sonarrServers[m.serverIdxInRange()]
+	if s.IsDefault {
+		return s.Name + " (default)"
+	}
+	return s.Name
+}
+
+// defaultServerIdx is where serverIdx resets to on entering modeConfirm:
+// whichever server Seerr itself defaults to, or 0 if none is marked (or
+// sonarrServers is empty).
+func (m model) defaultServerIdx() int {
+	for i, s := range m.sonarrServers {
+		if s.IsDefault {
+			return i
+		}
+	}
+	return 0
 }
 
 // requestsPageSize is passed as ListRequestsOptions.Take. internal/cli's

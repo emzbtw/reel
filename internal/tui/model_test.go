@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -222,7 +224,7 @@ func TestSubmitRequestCmd(t *testing.T) {
 		w.Write([]byte(`{"id": 9, "status": 1, "media": {"id": 1, "tmdbId": 42}}`))
 	})
 
-	msg := submitRequestCmd(context.Background(), client, testItem())()
+	msg := submitRequestCmd(context.Background(), client, testItem(), nil)()
 	result, ok := msg.(requestResultMsg)
 	if !ok {
 		t.Fatalf("msg = %#v, want requestResultMsg", msg)
@@ -232,6 +234,142 @@ func TestSubmitRequestCmd(t *testing.T) {
 	}
 	if result.req == nil || result.req.ID != 9 {
 		t.Errorf("result.req = %+v, want ID 9", result.req)
+	}
+}
+
+func TestSubmitRequestCmd_WithServerID(t *testing.T) {
+	var gotBody map[string]any
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		w.Write([]byte(`{"id": 9, "status": 1}`))
+	})
+
+	serverID := 1
+	item := testItem()
+	item.mediaType = models.MediaTV
+	msg := submitRequestCmd(context.Background(), client, item, &serverID)()
+	if result, ok := msg.(requestResultMsg); !ok || result.err != nil {
+		t.Fatalf("msg = %#v, want a successful requestResultMsg", msg)
+	}
+	if gotBody["serverId"] != float64(1) {
+		t.Errorf("request body serverId = %+v, want 1", gotBody["serverId"])
+	}
+}
+
+func TestFetchSonarrServersCmd(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id": 0, "name": "Sonarr", "isDefault": true}, {"id": 1, "name": "Sonarr Anime"}]`))
+	})
+
+	msg := fetchSonarrServersCmd(context.Background(), client)()
+	result, ok := msg.(sonarrServersLoadedMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want sonarrServersLoadedMsg", msg)
+	}
+	if result.err != nil {
+		t.Fatalf("result.err = %v, want nil", result.err)
+	}
+	if len(result.servers) != 2 || result.servers[1].Name != "Sonarr Anime" {
+		t.Errorf("result.servers = %+v", result.servers)
+	}
+}
+
+// selectedServerID/selectedServerName/canPickServer
+
+func testServers() []api.SonarrServer {
+	return []api.SonarrServer{
+		{ID: 0, Name: "Sonarr", IsDefault: true},
+		{ID: 1, Name: "Sonarr Anime"},
+	}
+}
+
+func TestSelectedServer_NilOnlyWhenNoServersKnown(t *testing.T) {
+	m := model{serverIdx: 0}
+	if id := m.selectedServerID(); id != nil {
+		t.Errorf("selectedServerID() = %v, want nil with no servers loaded", *id)
+	}
+	if name := m.selectedServerName(); name != "default" {
+		t.Errorf("selectedServerName() = %q, want %q", name, "default")
+	}
+}
+
+// TestSelectedServer_PicksByIndex checks the current pick is always sent
+// explicitly — including index 0, the server Seerr itself defaults to,
+// which is labeled "(default)" in the display name rather than treated as
+// a separate no-override state.
+func TestSelectedServer_PicksByIndex(t *testing.T) {
+	tv := testItem()
+	tv.mediaType = models.MediaTV
+	m := model{selected: tv, sonarrServers: testServers(), serverIdx: 0}
+	id := m.selectedServerID()
+	if id == nil || *id != 0 {
+		t.Fatalf("selectedServerID() = %v, want pointer to 0", id)
+	}
+	if name := m.selectedServerName(); name != "Sonarr (default)" {
+		t.Errorf("selectedServerName() = %q, want %q", name, "Sonarr (default)")
+	}
+
+	m.serverIdx = 1
+	id = m.selectedServerID()
+	if id == nil || *id != 1 {
+		t.Fatalf("selectedServerID() = %v, want pointer to 1", id)
+	}
+	if name := m.selectedServerName(); name != "Sonarr Anime" {
+		t.Errorf("selectedServerName() = %q, want %q", name, "Sonarr Anime")
+	}
+}
+
+// TestSelectedServer_NilForMovie is the regression test for a bug caught in
+// review: sonarrServers is populated once at startup regardless of what's
+// currently selected, so without an explicit mediaType check here, a movie
+// confirm's "y" would silently attach a Sonarr server's numeric ID to the
+// request as serverId — which Seerr would then use to pick a Radarr
+// instance by that same index, misrouting movies to the wrong (or a
+// nonexistent) Radarr server.
+func TestSelectedServer_NilForMovie(t *testing.T) {
+	m := model{selected: testItem(), sonarrServers: testServers(), serverIdx: 1}
+	if id := m.selectedServerID(); id != nil {
+		t.Errorf("selectedServerID() = %v, want nil for a movie even with Sonarr servers loaded", *id)
+	}
+}
+
+func TestDefaultServerIdx(t *testing.T) {
+	if got := (model{sonarrServers: testServers()}).defaultServerIdx(); got != 0 {
+		t.Errorf("defaultServerIdx() = %d, want 0 (Sonarr is marked default)", got)
+	}
+	if got := (model{}).defaultServerIdx(); got != 0 {
+		t.Errorf("defaultServerIdx() = %d, want 0 with no servers loaded", got)
+	}
+	noDefault := []api.SonarrServer{{ID: 0, Name: "Sonarr"}, {ID: 1, Name: "Sonarr Anime"}}
+	if got := (model{sonarrServers: noDefault}).defaultServerIdx(); got != 0 {
+		t.Errorf("defaultServerIdx() = %d, want 0 when none is marked IsDefault", got)
+	}
+}
+
+func TestCanPickServer(t *testing.T) {
+	tv := testItem()
+	tv.mediaType = models.MediaTV
+	movie := testItem()
+
+	tests := []struct {
+		name    string
+		item    browseItem
+		servers []api.SonarrServer
+		want    bool
+	}{
+		{"TV with 2 servers", tv, testServers(), true},
+		{"TV with 1 server", tv, testServers()[:1], false},
+		{"TV with no servers loaded", tv, nil, false},
+		{"movie with 2 servers", movie, testServers(), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model{selected: tt.item, sonarrServers: tt.servers}
+			if got := m.canPickServer(); got != tt.want {
+				t.Errorf("canPickServer() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1126,6 +1264,75 @@ func TestUpdate_Detail_Transitions(t *testing.T) {
 	}
 }
 
+// TestUpdate_Detail_REntryResetsServerIdx checks that a server pick from a
+// previous TV request never silently carries into the next one's confirm
+// screen.
+func TestUpdate_Detail_REntryResetsServerIdx(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeDetail
+	m.selected = testItem()
+	m.selected.mediaType = models.MediaTV
+	m.sonarrServers = testServers()
+	m.serverIdx = 1
+
+	updated, _ := m.Update(keyMsg("r"))
+	if got := updated.(model); got.serverIdx != 0 {
+		t.Errorf("serverIdx = %d, want 0 after entering modeConfirm", got.serverIdx)
+	}
+}
+
+func TestUpdate_Confirm_SCyclesServer(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeConfirm
+	m.selected = testItem()
+	m.selected.mediaType = models.MediaTV
+	m.sonarrServers = testServers()
+
+	updated, _ := m.Update(keyMsg("s"))
+	got := updated.(model)
+	if got.serverIdx != 1 {
+		t.Errorf("serverIdx = %d, want 1 after one \"s\"", got.serverIdx)
+	}
+
+	// Wraps back to 0 (only two servers configured).
+	updated, _ = got.Update(keyMsg("s"))
+	got = updated.(model)
+	if got.serverIdx != 0 {
+		t.Errorf("serverIdx = %d, want 0 (wrapped)", got.serverIdx)
+	}
+}
+
+// TestUpdate_Confirm_SNoopsWithoutChoice checks "s" does nothing for a
+// movie, or for a TV item with fewer than two known Sonarr servers —
+// canPickServer's guard, exercised through Update.
+func TestUpdate_Confirm_SNoopsWithoutChoice(t *testing.T) {
+	tests := []struct {
+		name    string
+		tv      bool
+		servers []api.SonarrServer
+	}{
+		{"movie with servers", false, testServers()},
+		{"TV with one server", true, testServers()[:1]},
+		{"TV with no servers loaded", true, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModel(context.Background(), nil)
+			m.mode = modeConfirm
+			m.selected = testItem()
+			if tt.tv {
+				m.selected.mediaType = models.MediaTV
+			}
+			m.sonarrServers = tt.servers
+
+			updated, _ := m.Update(keyMsg("s"))
+			if got := updated.(model); got.serverIdx != 0 {
+				t.Errorf("serverIdx = %d, want 0 (unchanged)", got.serverIdx)
+			}
+		})
+	}
+}
+
 func TestUpdate_Confirm_YSubmits(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id": 11, "status": 1, "media": {"id": 1, "tmdbId": 42}}`))
@@ -1156,6 +1363,36 @@ func TestUpdate_Confirm_YSubmits(t *testing.T) {
 	}
 	if final.lastRequest == nil || final.lastRequest.ID != 11 {
 		t.Errorf("lastRequest = %+v, want request #11", final.lastRequest)
+	}
+}
+
+// TestUpdate_Confirm_YSubmits_MovieOmitsServerID is the end-to-end
+// regression test for the bug TestSelectedServer_NilForMovie guards at the
+// accessor level: with Sonarr servers loaded (as they would be at real
+// startup, regardless of what's selected), confirming a *movie* request via
+// the actual "y" key handler must never post a serverId.
+func TestUpdate_Confirm_YSubmits_MovieOmitsServerID(t *testing.T) {
+	var gotBody map[string]any
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		w.Write([]byte(`{"id": 12, "status": 1}`))
+	})
+	m := newModel(context.Background(), client)
+	m.mode = modeConfirm
+	m.selected = testItem() // a movie
+	m.sonarrServers = testServers()
+	m.serverIdx = 1
+
+	_, cmd := m.Update(keyMsg("y"))
+	if cmd == nil {
+		t.Fatal("cmd = nil, want the request-submitting command")
+	}
+	if _, ok := cmd().(requestResultMsg); !ok {
+		t.Fatalf("cmd() did not return requestResultMsg")
+	}
+	if _, ok := gotBody["serverId"]; ok {
+		t.Errorf("movie request body should not include serverId: %+v", gotBody)
 	}
 }
 
