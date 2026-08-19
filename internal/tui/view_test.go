@@ -131,6 +131,44 @@ func TestView_Detail(t *testing.T) {
 	}
 }
 
+// TestView_Detail_AnimeTag checks the detail view puts "Anime" right after
+// the "TV" type label, matching Discover/Search's list-row format.
+func TestView_Detail_AnimeTag(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeDetail
+	m.selected = browseItem{mediaType: models.MediaTV, title: "Attack on Titan", year: "2013", isAnime: true}
+
+	out := m.View()
+	if !strings.Contains(out, "TV · Anime") {
+		t.Errorf("View() missing %q:\n%s", "TV · Anime", out)
+	}
+}
+
+// TestView_Detail_AnimeRatingSeparator checks the type/rating line uses a
+// consistent " · " separator throughout ("TV · Anime · ★ 8.7"), not a plain
+// double space before the rating.
+func TestView_Detail_AnimeRatingSeparator(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeDetail
+	m.selected = browseItem{mediaType: models.MediaTV, title: "Attack on Titan", year: "2013", isAnime: true, voteAverage: 8.7}
+
+	out := m.View()
+	if !strings.Contains(out, "TV · Anime · ★ 8.7") {
+		t.Errorf("View() missing %q:\n%s", "TV · Anime · ★ 8.7", out)
+	}
+}
+
+func TestView_Detail_NoAnimeTagForRegularTV(t *testing.T) {
+	m := newModel(context.Background(), nil)
+	m.mode = modeDetail
+	m.selected = browseItem{mediaType: models.MediaTV, title: "Chernobyl", year: "2019"}
+
+	out := m.View()
+	if strings.Contains(out, "Anime") {
+		t.Errorf("View() unexpectedly shows an Anime tag:\n%s", out)
+	}
+}
+
 func TestView_Confirm(t *testing.T) {
 	m := newModel(context.Background(), nil)
 	m.mode = modeConfirm

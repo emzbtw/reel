@@ -77,6 +77,61 @@ func TestFetchPageCmd_Movies(t *testing.T) {
 	}
 }
 
+func TestIsAnime(t *testing.T) {
+	tests := []struct {
+		name             string
+		genreIDs         []int
+		originalLanguage string
+		want             bool
+	}{
+		{"animation genre + japanese", []int{18, 16}, "ja", true},
+		{"animation genre + english", []int{16}, "en", false},
+		{"no animation genre + japanese", []int{18}, "ja", false},
+		{"neither", []int{18}, "en", false},
+		{"nothing set", nil, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAnime(tt.genreIDs, tt.originalLanguage); got != tt.want {
+				t.Errorf("isAnime(%v, %q) = %v, want %v", tt.genreIDs, tt.originalLanguage, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTvItem_SetsIsAnime checks tvItem wires GenreIDs/OriginalLanguage
+// through isAnime, and that movieItem never sets it — the "TV · Anime"
+// pattern is TV-only, matching what was asked for.
+func TestTvItem_SetsIsAnime(t *testing.T) {
+	tv := tvItem(models.TvResult{Name: "Attack on Titan", GenreIDs: []int{16}, OriginalLanguage: "ja"})
+	if !tv.isAnime {
+		t.Error("tvItem().isAnime = false, want true for an animation genre + Japanese original language")
+	}
+
+	notAnime := tvItem(models.TvResult{Name: "Chernobyl", GenreIDs: []int{18}, OriginalLanguage: "en"})
+	if notAnime.isAnime {
+		t.Error("tvItem().isAnime = true, want false")
+	}
+
+	movie := movieItem(models.MovieResult{Title: "Dune"})
+	if movie.isAnime {
+		t.Error("movieItem().isAnime = true, want false always")
+	}
+}
+
+func TestBrowseItem_Description_Anime(t *testing.T) {
+	it := browseItem{mediaType: models.MediaTV, year: "2013", isAnime: true}
+	got := it.Description()
+	if !strings.Contains(got, "TV · Anime · 2013") {
+		t.Errorf("Description() = %q, want it to contain %q", got, "TV · Anime · 2013")
+	}
+
+	notAnime := browseItem{mediaType: models.MediaTV, year: "2019"}
+	if strings.Contains(notAnime.Description(), "Anime") {
+		t.Errorf("Description() = %q, want no Anime tag", notAnime.Description())
+	}
+}
+
 func TestFetchPageCmd_TV(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/discover/tv" {
@@ -84,7 +139,10 @@ func TestFetchPageCmd_TV(t *testing.T) {
 		}
 		w.Write([]byte(`{
 			"page": 1, "totalPages": 10, "totalResults": 200,
-			"results": [{"id": 5, "mediaType": "tv", "name": "Chernobyl", "firstAirDate": "2019-05-06"}]
+			"results": [
+				{"id": 5, "mediaType": "tv", "name": "Chernobyl", "firstAirDate": "2019-05-06", "genreIds": [18], "originalLanguage": "en"},
+				{"id": 6, "mediaType": "tv", "name": "Attack on Titan", "firstAirDate": "2013-04-07", "genreIds": [10759, 16], "originalLanguage": "ja"}
+			]
 		}`))
 	})
 
@@ -93,8 +151,14 @@ func TestFetchPageCmd_TV(t *testing.T) {
 	if !ok {
 		t.Fatalf("msg = %#v, want pageLoadedMsg", msg)
 	}
-	if len(loaded.items) != 1 || loaded.items[0].title != "Chernobyl" || loaded.items[0].mediaType != models.MediaTV {
-		t.Errorf("loaded.items = %+v, want a single tv Chernobyl", loaded.items)
+	if len(loaded.items) != 2 || loaded.items[0].title != "Chernobyl" || loaded.items[0].mediaType != models.MediaTV {
+		t.Errorf("loaded.items = %+v, want Chernobyl then Attack on Titan", loaded.items)
+	}
+	if loaded.items[0].isAnime {
+		t.Error("Chernobyl: isAnime = true, want false")
+	}
+	if !loaded.items[1].isAnime {
+		t.Error("Attack on Titan: isAnime = false, want true (genreIds/originalLanguage from the API response)")
 	}
 }
 

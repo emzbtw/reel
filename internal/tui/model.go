@@ -55,12 +55,17 @@ type browseItem struct {
 	voteCount   int
 	popularity  float64
 	status      *models.MediaStatus // nil when Seerr has no library record for it
+	// isAnime is TV-only — see isAnime's doc comment for how it's derived.
+	isAnime bool
 }
 
 func (i browseItem) FilterValue() string { return i.title }
 func (i browseItem) Title() string       { return i.title }
 func (i browseItem) Description() string {
 	desc := typeLabel(i.mediaType)
+	if i.isAnime {
+		desc += " · Anime"
+	}
 	if i.year != "" {
 		desc += " · " + i.year
 	}
@@ -107,12 +112,38 @@ func tvItem(t models.TvResult) browseItem {
 		voteAverage: t.VoteAverage,
 		voteCount:   t.VoteCount,
 		popularity:  t.Popularity,
+		isAnime:     isAnime(t.GenreIDs, t.OriginalLanguage),
 	}
 	if t.MediaInfo != nil {
 		s := t.MediaInfo.Status
 		item.status = &s
 	}
 	return item
+}
+
+// animeGenreID is TMDB's "Animation" genre — id 16 in both its movie and TV
+// genre lists.
+const animeGenreID = 16
+
+// isAnime approximates Seerr's own "Series Type: Anime" flag. That flag
+// comes from a TMDB keyword (id 210024, "anime") only present on a show's
+// full detail response — Discover/Search list results don't carry it, and
+// fetching it per row isn't viable for a paginated list. Genre-includes-
+// Animation plus a Japanese original language is the standard proxy other
+// TMDB-consuming apps use instead: no extra request, and — since it's
+// computed from the same list-result fields everywhere reel uses it —
+// consistent between the list rows and the detail view, even though it can
+// occasionally disagree with Seerr's own flag on an edge-case title.
+func isAnime(genreIDs []int, originalLanguage string) bool {
+	if originalLanguage != "ja" {
+		return false
+	}
+	for _, id := range genreIDs {
+		if id == animeGenreID {
+			return true
+		}
+	}
+	return false
 }
 
 func year(date string) string {

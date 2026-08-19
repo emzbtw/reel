@@ -171,9 +171,13 @@ func (m model) detailView() string {
 		fmt.Fprintf(&b, " %s", mutedStyle.Render(fmt.Sprintf("(%s)", it.year)))
 	}
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render(typeLabel(it.mediaType)))
+	typeText := typeLabel(it.mediaType)
+	if it.isAnime {
+		typeText += " · Anime"
+	}
+	b.WriteString(mutedStyle.Render(typeText))
 	if it.voteAverage > 0 {
-		fmt.Fprintf(&b, "%s", mutedStyle.Render(fmt.Sprintf("  ★ %.1f", it.voteAverage)))
+		fmt.Fprintf(&b, "%s", mutedStyle.Render(fmt.Sprintf(" · ★ %.1f", it.voteAverage)))
 	}
 	if it.status != nil {
 		fmt.Fprintf(&b, "  %s", statusBadge(*it.status))

@@ -33,6 +33,12 @@ type TvResult struct {
 	VoteCount    int        `json:"voteCount"`
 	Popularity   float64    `json:"popularity"`
 	MediaInfo    *MediaInfo `json:"mediaInfo"`
+	// GenreIDs/OriginalLanguage are used by internal/tui to approximate
+	// Seerr's own "Series Type: Anime" flag (a TMDB keyword only present on
+	// a show's full detail response, unavailable on list results like this
+	// one) without an extra API call per item.
+	GenreIDs         []int  `json:"genreIds"`
+	OriginalLanguage string `json:"originalLanguage"`
 }
 
 // PersonResult mirrors the `PersonResult` schema.
